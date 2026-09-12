@@ -14,6 +14,7 @@ on:
 env:
   BUN_VERSION: "1.2.13"
   OPENCODE_VERSION: "1.18.30"
+  OPENTUI_VERSION: "v0.4.5"
   ANDROID_API: "24"
   ANDROID_NDK_VERSION: "28.1.13356709"
   WEBKIT_COMMIT: "017930ebf915121f8f593bef61cbbca82d78132d"
@@ -33,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Override OpenCode version from input
         if: github.event.inputs.opencode_version
@@ -156,21 +157,21 @@ jobs:
 
       - name: Cache ICU build
         id: cache-icu
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.WORK_DIR }}/deps-android/prefix
           key: icu-android-${{ env.ICU_VERSION }}-${{ env.ANDROID_API }}
 
       - name: Cache WebKit build
         id: cache-webkit
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.WORK_DIR }}/webkit-android
           key: webkit-android-${{ env.WEBKIT_COMMIT }}-${{ steps.hashes.outputs.webkit_patch_hash }}
 
       - name: Cache Bun binary
         id: cache-bun
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.WORK_DIR }}/bun-build/bun
           key: bun-android-${{ env.BUN_VERSION }}-${{ steps.hashes.outputs.bun_patch_hash }}-${{ steps.hashes.outputs.zig_patch_hash }}
@@ -273,7 +274,7 @@ jobs:
       # Upload artifacts
       # =============================================
       - name: Upload packages as artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: opencode-termux-${{ env.OPENCODE_VERSION }}
           path: |
