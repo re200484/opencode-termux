@@ -119,7 +119,10 @@ try {
 }
 console.log(`Parser worker: ${parserWorkerResolved}`)
 
-const workerPath = "./src/cli/cmd/tui/worker.ts"
+// NOTE: must match upstream packages/opencode/script/build.ts workerPath.
+// (Was ./src/cli/cmd/tui/worker.ts before OpenCode ~1.4; moved to
+// ./src/cli/tui/worker.ts and the old path no longer exists.)
+const workerPath = "./src/cli/tui/worker.ts"
 
 const bunfsRoot = "/$bunfs/root/"
 const workerRelativePath = path.relative(OPENCODE_DIR, parserWorkerResolved).replaceAll("\\", "/")
@@ -133,9 +136,13 @@ const hostBinaryPath = path.join(OUTPUT_DIR, "opencode-host")
 
 console.log("Building standalone binary for host platform...")
 const result = await Bun.build({
-  conditions: ["browser"],
+  // NOTE: conditions must match upstream script/build.ts (["bun", "node"]).
+  // "browser" resolves browser-specific builds of native deps, which then
+  // fail or misbehave inside the standalone binary on Android.
+  conditions: ["bun", "node"],
   tsconfig: "./tsconfig.json",
   plugins: [plugin],
+  external: ["node-gyp"],
   compile: {
     autoloadBunfig: false,
     autoloadDotenv: false,
@@ -148,10 +155,24 @@ const result = await Bun.build({
   define: {
     OPENCODE_VERSION: `'${VERSION}'`,
     OPENCODE_MIGRATIONS: JSON.stringify(migrations),
+    // NOTE: v1.18+ reads models from the OPENCODE_MODELS_DEV global (injected
+    // as a raw JSON expression, same as upstream script/build.ts).
+    // models-snapshot.js above is legacy (pre-1.4 layout) and now unused.
+    OPENCODE_MODELS_DEV: modelsData,
     OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
     OPENCODE_WORKER_PATH: workerPath,
     OPENCODE_CHANNEL: `'${CHANNEL}'`,
     OPENCODE_LIBC: "",
+    // NOTE: must stay "glibc" (upstream linux default). The Android build
+    // swaps the x86_64 libopentui.so inside @opentui/core-linux-x64 with the
+    // ARM64 one before bundling; any other value would make the runtime look
+    // for a different (non-existent) prebuilt package.
+    "process.env.OPENTUI_LIBC": JSON.stringify("glibc"),
+    // NOTE: upstream picks "musl"/"gnu" per build ABI for the fff file-finder
+    // binary. Neither matches Bionic; "musl" (static) has the best chance of
+    // executing on Android, "gnu" (glibc dynamic) is guaranteed to fail.
+    // fff is non-fatal (graceful fallback), revisit if file search breaks.
+    FFF_LIBC: JSON.stringify("musl"),
   },
 })
 
