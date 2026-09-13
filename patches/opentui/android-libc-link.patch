@@ -35,8 +35,8 @@ index 0c82ba3..e3c43ee 100644
 +    const os_tag = target.result.os.tag;
 +    const abi = target.result.abi;
 +    if (os_tag == .linux and (abi == .android or abi == .androideabi)) {
-+        lib.link_libc = false;
-+        lib.link_libcpp = false;
++        module.link_libc = false;
++        module.link_libcpp = false;
 +        const ndk_home: ?[]const u8 = std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME") catch null;
 +        if (ndk_home) |ndk| {
 +            const inc = std.fmt.allocPrint(b.allocator, "{s}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include", .{ndk}) catch null;
