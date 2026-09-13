@@ -1,0 +1,79 @@
+name: Build libopentui.so only (fast lane)
+
+# Lightweight workflow for iterating on the OpenTUI Android build
+# without running the full ~1h pipeline (ICU + WebKit + Bun).
+# libopentui.so only needs the NDK + Zig: ~6 min per run.
+#
+# Use this while debugging the TUI library; run the full
+# "Build OpenCode for Android/Termux" workflow for complete binaries.
+
+on:
+  workflow_dispatch:
+
+env:
+  OPENTUI_VERSION: "v0.4.5"
+  ANDROID_API: "24"
+  ANDROID_NDK_VERSION: "28.1.13356709"
+  ZIG_VERSION: "0.15.2"
+  WORK_DIR: "${{ github.workspace }}/opencode-build"
+
+jobs:
+  build-opentui:
+    name: Build libopentui.so (Android aarch64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Create work directory
+        run: mkdir -p "$WORK_DIR"
+
+      - name: Install Android NDK r28b (local, no sudo)
+        run: |
+          NDK_DIR="$WORK_DIR/android-ndk"
+          if [ -d "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64" ]; then
+            echo "NDK already installed at $NDK_DIR"
+          else
+            echo "Downloading Android NDK r28b..."
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq unzip
+            cd /tmp
+            wget -q "https://dl.google.com/android/repository/android-ndk-r28b-linux.zip" -O ndk.zip
+            mkdir -p "$NDK_DIR"
+            unzip -q ndk.zip -d /tmp/ndk-extract
+            mv /tmp/ndk-extract/android-ndk-r28b/* "$NDK_DIR/"
+            rm -rf /tmp/ndk-extract ndk.zip
+          fi
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> $GITHUB_ENV
+          echo "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Install Zig
+        run: |
+          ZIG_DIR="$WORK_DIR/zig-${ZIG_VERSION}"
+          if [ -x "$ZIG_DIR/zig" ]; then
+            echo "Zig already installed at $ZIG_DIR"
+          else
+            echo "Downloading Zig ${ZIG_VERSION}..."
+            cd /tmp
+            wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" -O zig.tar.xz
+            mkdir -p "$ZIG_DIR"
+            tar xf zig.tar.xz -C "$ZIG_DIR" --strip-components=1
+            rm zig.tar.xz
+          fi
+          echo "ZIG_BIN=$ZIG_DIR/zig" >> $GITHUB_ENV
+          echo "$ZIG_DIR" >> $GITHUB_PATH
+
+      - name: Build libopentui.so
+        run: |
+          source scripts/env.sh
+          ./scripts/build-opentui.sh
+
+      - name: Upload libopentui.so
+        uses: actions/upload-artifact@v6
+        with:
+          name: libopentui-android-aarch64
+          path: |
+            ${{ env.WORK_DIR }}/opentui-src/packages/core/src/lib/aarch64-linux-android/libopentui.so
+            ${{ env.WORK_DIR }}/opentui-src/packages/lib/aarch64-linux-android/libopentui.so
