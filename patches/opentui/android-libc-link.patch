@@ -1,5 +1,5 @@
 diff --git a/packages/core/src/zig/build.zig b/packages/core/src/zig/build.zig
-index 0c82ba3..a82307b 100644
+index 0c82ba3..e3c43ee 100644
 --- a/packages/core/src/zig/build.zig
 +++ b/packages/core/src/zig/build.zig
 @@ -190,8 +190,17 @@ fn addNativeAudioDependencies(
@@ -22,41 +22,59 @@ index 0c82ba3..a82307b 100644
          },
          else => {},
      }
-@@ -491,6 +500,37 @@ fn buildTarget(
-         .linkage = .dynamic,
-     });
+@@ -494,6 +503,55 @@ fn buildTarget(
+     addNativeAudioDependencies(b, lib, target, macos_sdk_path);
+     addYogaDependencies(b, lib);
  
-+    // On Android, the .so must have NEEDED libc.so so dlopen can resolve
-+    // symbols like getauxval. Zig doesn't bundle Android libc, so we directly
-+    // add the NDK sysroot's libc.so stub as a link input and put the NDK stub
-+    // directories on the library search path so -lc resolves.
-+    // (Bionic merges dl/pthread into libc; they exist only as linker stubs.)
++    // Android/Bionic: Zig ships no Android libc, so -lc/-lc++ fail with
++    // "unable to provide libc for target". Wire the NDK sysroot manually:
++    // drop Zig's libc/libc++ linkage, take C/C++ headers from the NDK, and
++    // link the NDK libc.so + libc++_shared.so stubs directly. The stubs also
++    // give the .so its NEEDED entries so dlopen() resolves them on device
++    // (notably getauxval and friends from libc).
 +    const os_tag = target.result.os.tag;
 +    const abi = target.result.abi;
 +    if (os_tag == .linux and (abi == .android or abi == .androideabi)) {
-+        const ndk_lib: ?[]const u8 = blk: {
-+            if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_LIB_DIR") catch null) |dir| {
-+                break :blk dir;
++        lib.link_libc = false;
++        lib.link_libcpp = false;
++        const ndk_home: ?[]const u8 = std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME") catch null;
++        if (ndk_home) |ndk| {
++            const inc = std.fmt.allocPrint(b.allocator, "{s}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include", .{ndk}) catch null;
++            if (inc) |d| {
++                lib.addSystemIncludePath(.{ .cwd_relative = d });
++                if (std.fmt.allocPrint(b.allocator, "{s}/aarch64-linux-android", .{d}) catch null) |arch_d| {
++                    lib.addSystemIncludePath(.{ .cwd_relative = arch_d });
++                }
 +            }
-+            if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME") catch null) |ndk_home| {
-+                break :blk std.fmt.allocPrint(b.allocator, "{s}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/24", .{ndk_home}) catch null;
-+            }
-+            break :blk null;
-+        };
-+        if (ndk_lib) |dir| {
-+            // Use addObjectFile to directly link the libc.so stub without triggering
-+            // Zig's native libc provision
-+            const libc_path = std.fmt.allocPrint(b.allocator, "{s}/libc.so", .{dir}) catch unreachable;
-+            lib.addObjectFile(.{ .cwd_relative = libc_path });
-+            // Resolve -lc against the NDK stubs (both the
-+            // API-level dir and its parent arch dir, layout varies by NDK).
-+            lib.addLibraryPath(.{ .cwd_relative = dir });
-+            if (std.fs.path.dirname(dir)) |arch_dir| {
-+                lib.addLibraryPath(.{ .cwd_relative = arch_dir });
++            const arch_lib = std.fmt.allocPrint(b.allocator, "{s}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android", .{ndk}) catch null;
++            if (arch_lib) |adl| {
++                // Prefer the API-level stub dir, fall back to the top arch
++                // dir; NDK layout varies by version. Missing candidates are
++                // skipped via pathExists.
++                const libc_stubs = [_][]const u8{
++                    std.fmt.allocPrint(b.allocator, "{s}/24/libc.so", .{adl}) catch "",
++                    std.fmt.allocPrint(b.allocator, "{s}/libc.so", .{adl}) catch "",
++                };
++                for (libc_stubs) |s| {
++                    if (s.len != 0 and pathExists(s)) {
++                        lib.addObjectFile(.{ .cwd_relative = s });
++                        break;
++                    }
++                }
++                const libcpp_stubs = [_][]const u8{
++                    std.fmt.allocPrint(b.allocator, "{s}/24/libc++_shared.so", .{adl}) catch "",
++                    std.fmt.allocPrint(b.allocator, "{s}/libc++_shared.so", .{adl}) catch "",
++                };
++                for (libcpp_stubs) |s| {
++                    if (s.len != 0 and pathExists(s)) {
++                        lib.addObjectFile(.{ .cwd_relative = s });
++                        break;
++                    }
++                }
 +            }
 +        }
 +    }
 +
-     addNativeAudioDependencies(b, lib, target, macos_sdk_path);
-     addYogaDependencies(b, lib);
- 
+     const install_dir = b.addInstallArtifact(lib, .{
+         .dest_dir = .{
+             .override = .{
