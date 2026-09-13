@@ -10,6 +10,11 @@ name: Build libopentui.so only (fast lane)
 on:
   workflow_dispatch:
 
+# upload-artifact needs actions:write.
+permissions:
+  contents: read
+  actions: write
+
 env:
   OPENTUI_VERSION: "v0.4.5"
   ANDROID_API: "24"

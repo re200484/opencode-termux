@@ -11,6 +11,13 @@ on:
         required: false
         default: '1.18.30'
 
+# actions/cache (save/restore), upload-artifact and releases all need
+# write access. Without this block, repos with restricted default
+# GITHUB_TOKEN permissions silently skip cache saves (0 caches).
+permissions:
+  contents: write
+  actions: write
+
 env:
   BUN_VERSION: "1.2.13"
   OPENCODE_VERSION: "1.18.30"
