@@ -1,19 +1,18 @@
 diff --git a/packages/core/src/zig/build.zig b/packages/core/src/zig/build.zig
-index 0c82ba3..e3c43ee 100644
+index 0c82ba3..d069ef0 100644
 --- a/packages/core/src/zig/build.zig
 +++ b/packages/core/src/zig/build.zig
-@@ -190,8 +190,17 @@ fn addNativeAudioDependencies(
+@@ -190,8 +190,16 @@ fn addNativeAudioDependencies(
      switch (target.result.os.tag) {
          .macos => addMacOSSystemLibraries(b, artifact, macos_sdk_path.?),
          .linux => {
 -            artifact.linkSystemLibrary("dl");
 -            artifact.linkSystemLibrary("pthread");
 +            // Bionic (Android) merges dl/pthread into libc: no separate
-+            // libdl/libpthread exist (only linker stubs for some), and the
-+            // NDK sysroot has no libpthread stub at all, so Zig fails with
-+            // "unable to find dynamic system library 'pthread'". Skip both
-+            // on Android; symbols resolve via the libc.so stub linked in
-+            // buildTarget, which gives the .so its NEEDED: libc.so entry.
++            // libdl/libpthread exist, and the NDK sysroot has no libpthread
++            // stub at all, so Zig fails with "unable to find dynamic system
++            // library 'pthread'". Skip both on Android; symbols resolve via
++            // libc (linked through the NDK installation below).
 +            const abi = target.result.abi;
 +            if (abi != .android and abi != .androideabi) {
 +                artifact.linkSystemLibrary("dl");
@@ -22,54 +21,36 @@ index 0c82ba3..e3c43ee 100644
          },
          else => {},
      }
-@@ -494,6 +503,55 @@ fn buildTarget(
+@@ -494,6 +502,37 @@ fn buildTarget(
      addNativeAudioDependencies(b, lib, target, macos_sdk_path);
      addYogaDependencies(b, lib);
  
-+    // Android/Bionic: Zig ships no Android libc, so -lc/-lc++ fail with
-+    // "unable to provide libc for target". Wire the NDK sysroot manually:
-+    // drop Zig's libc/libc++ linkage, take C/C++ headers from the NDK, and
-+    // link the NDK libc.so + libc++_shared.so stubs directly. The stubs also
-+    // give the .so its NEEDED entries so dlopen() resolves them on device
-+    // (notably getauxval and friends from libc).
++    // Android/Bionic: Zig ships no Android libc, so any -lc/-lc++ link fails
++    // with "unable to provide libc for target". Teach Zig the NDK sysroot
++    // via a generated libc.txt (headers, arch headers, CRT): -lc then
++    // resolves against the NDK, which also gives the .so its NEEDED: libc.so
++    // entry so dlopen() resolves symbols like getauxval on device.
 +    const os_tag = target.result.os.tag;
 +    const abi = target.result.abi;
 +    if (os_tag == .linux and (abi == .android or abi == .androideabi)) {
-+        module.link_libc = false;
-+        module.link_libcpp = false;
++        // Teach Zig about the NDK sysroot via a generated libc.txt so it
++        // can provide libc for the aarch64-linux-android target.
 +        const ndk_home: ?[]const u8 = std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME") catch null;
 +        if (ndk_home) |ndk| {
-+            const inc = std.fmt.allocPrint(b.allocator, "{s}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include", .{ndk}) catch null;
-+            if (inc) |d| {
-+                lib.addSystemIncludePath(.{ .cwd_relative = d });
-+                if (std.fmt.allocPrint(b.allocator, "{s}/aarch64-linux-android", .{d}) catch null) |arch_d| {
-+                    lib.addSystemIncludePath(.{ .cwd_relative = arch_d });
-+                }
-+            }
-+            const arch_lib = std.fmt.allocPrint(b.allocator, "{s}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android", .{ndk}) catch null;
-+            if (arch_lib) |adl| {
-+                // Prefer the API-level stub dir, fall back to the top arch
-+                // dir; NDK layout varies by version. Missing candidates are
-+                // skipped via pathExists.
-+                const libc_stubs = [_][]const u8{
-+                    std.fmt.allocPrint(b.allocator, "{s}/24/libc.so", .{adl}) catch "",
-+                    std.fmt.allocPrint(b.allocator, "{s}/libc.so", .{adl}) catch "",
-+                };
-+                for (libc_stubs) |s| {
-+                    if (s.len != 0 and pathExists(s)) {
-+                        lib.addObjectFile(.{ .cwd_relative = s });
-+                        break;
-+                    }
-+                }
-+                const libcpp_stubs = [_][]const u8{
-+                    std.fmt.allocPrint(b.allocator, "{s}/24/libc++_shared.so", .{adl}) catch "",
-+                    std.fmt.allocPrint(b.allocator, "{s}/libc++_shared.so", .{adl}) catch "",
-+                };
-+                for (libcpp_stubs) |s| {
-+                    if (s.len != 0 and pathExists(s)) {
-+                        lib.addObjectFile(.{ .cwd_relative = s });
-+                        break;
-+                    }
++            const sys = std.fmt.allocPrint(b.allocator, "{s}/toolchains/llvm/prebuilt/linux-x86_64/sysroot", .{ndk}) catch null;
++            if (sys) |s| {
++                const content = std.fmt.allocPrint(b.allocator,
++                    \\include_dir={s}/usr/include
++                    \\sys_include_dir={s}/usr/include/aarch64-linux-android
++                    \\crt_dir={s}/usr/lib/aarch64-linux-android/24
++                    \\msvc_lib_dir=
++                    \\kernel32_lib_dir=
++                    \\gcc_dir=
++                    \\
++                , .{ s, s, s }) catch null;
++                if (content) |c| {
++                    const wf = b.addWriteFiles();
++                    lib.setLibCFile(wf.add("android-libc.txt", c));
 +                }
 +            }
 +        }
