@@ -71,11 +71,17 @@ if [ -z "$OPENTUI_ZIG_DIR" ] || [ ! -f "$OPENTUI_ZIG_DIR/build.zig" ]; then
 fi
 
 echo ">>> Building with Zig in $OPENTUI_ZIG_DIR (flag: $ZIG_TARGET_FLAG=aarch64-linux-android)..."
+echo "    sysroot: $NDK_SYSROOT"
 cd "$OPENTUI_ZIG_DIR"
 
+# NOTE: --sysroot is REQUIRED for Android. Zig bundles no Android/Bionic
+# libc, so any dynamic link for aarch64-linux-android fails with
+# "unable to provide libc for target". Pointing Zig at the NDK sysroot gives
+# it the Bionic headers, stubs, and CRT layout it expects.
 "$ZIG_BIN" build \
     "$ZIG_TARGET_FLAG=aarch64-linux-android" \
     -Doptimize=ReleaseSafe \
+    --sysroot "$NDK_SYSROOT" \
     --prefix . 2>&1
 
 # The build.zig installs to dest_dir="../lib/{output_name}" relative to
