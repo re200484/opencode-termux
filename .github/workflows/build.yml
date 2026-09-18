@@ -319,9 +319,13 @@ jobs:
 
             **Standalone binary:**
             ```bash
+            # Requires: ripgrep, proot (pkg install ripgrep proot)
             # Download and extract the .zip, then:
-            chmod +x opencode
-            mv opencode $PREFIX/bin/
+            unzip opencode-*-android-aarch64.zip
+            mkdir -p $PREFIX/libexec/opencode
+            mv opencode $PREFIX/bin/opencode
+            mv opencode.bin $PREFIX/libexec/opencode/opencode.bin
+            chmod +x $PREFIX/bin/opencode
             ```
 
             ### Build info

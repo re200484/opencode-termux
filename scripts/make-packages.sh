@@ -31,13 +31,51 @@ BUILD_DATE=$(date +%s)
 rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"
 
+# Termux launcher for the standalone binary.
+# The binary needs a writable /tmp (module cache, workers), which stock
+# Android does not provide. When /tmp is not writable, bind a private tmp
+# over it via proot (Termux package, must be installed).
+write_termux_launcher() {
+    cat > "$1" << 'LAUNCHER_EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+# opencode launcher for Termux.
+if [ -z "${PREFIX:-}" ]; then
+    echo 'opencode: $PREFIX is not set (not a Termux shell?)' >&2
+    exit 1
+fi
+BIN="$PREFIX/libexec/opencode/opencode.bin"
+if [ ! -x "$BIN" ]; then
+    echo "opencode: binary not found at $BIN" >&2
+    exit 1
+fi
+: "${TMPDIR:=$PREFIX/tmp}"
+mkdir -p "$TMPDIR" 2>/dev/null || true
+if [ -d /tmp ] && [ -w /tmp ]; then
+    exec "$BIN" "$@"
+fi
+if ! command -v proot >/dev/null 2>&1; then
+    echo "opencode: /tmp is not writable and 'proot' is not installed." >&2
+    echo "opencode: run: pkg install proot" >&2
+    exit 1
+fi
+exec proot -b "$TMPDIR:/tmp" "$BIN" "$@"
+LAUNCHER_EOF
+}
+
 # ==========================================
 # 1. ZIP package
 # ==========================================
 echo ">>> Creating ZIP package..."
 ZIP_NAME="opencode-${OPENCODE_VERSION}-android-aarch64.zip"
-cd "$DIST_DIR"
-zip -9 "$PKG_DIR/$ZIP_NAME" opencode
+ZIP_STAGING="$PKG_DIR/zip-staging"
+mkdir -p "$ZIP_STAGING"
+cp "$OPENCODE_BINARY" "$ZIP_STAGING/opencode.bin"
+chmod 755 "$ZIP_STAGING/opencode.bin"
+write_termux_launcher "$ZIP_STAGING/opencode"
+chmod 755 "$ZIP_STAGING/opencode"
+WRAPPER_SIZE=$(stat -c%s "$ZIP_STAGING/opencode")
+cd "$ZIP_STAGING"
+zip -9 "$PKG_DIR/$ZIP_NAME" opencode opencode.bin
 echo "    Created $ZIP_NAME"
 
 # ==========================================
@@ -46,8 +84,11 @@ echo "    Created $ZIP_NAME"
 echo ">>> Creating pacman package..."
 PACMAN_STAGING="$PKG_DIR/pacman-staging"
 mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/bin"
+mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode"
 
-cp "$OPENCODE_BINARY" "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
+cp "$OPENCODE_BINARY" "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
+chmod 755 "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
+write_termux_launcher "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
 chmod 755 "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
 
 # Create .PKGINFO
@@ -58,10 +99,11 @@ pkgdesc = AI-powered coding assistant for the terminal
 url = https://github.com/anomalyco/opencode
 builddate = ${BUILD_DATE}
 packager = opencode-termux
-size = ${BINARY_SIZE}
+size = $((BINARY_SIZE + WRAPPER_SIZE))
 arch = aarch64
 license = MIT
 depend = ripgrep
+depend = proot
 EOF
 
 PACMAN_NAME="opencode-${OPENCODE_VERSION}-1-aarch64.pkg.tar.xz"
@@ -75,20 +117,23 @@ echo "    Created $PACMAN_NAME"
 echo ">>> Creating deb package..."
 DEB_STAGING="$PKG_DIR/deb-staging"
 mkdir -p "$DEB_STAGING/data/data/data/com.termux/files/usr/bin"
+mkdir -p "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode"
 mkdir -p "$DEB_STAGING/DEBIAN"
 
-cp "$OPENCODE_BINARY" "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
+cp "$OPENCODE_BINARY" "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
+chmod 755 "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
+write_termux_launcher "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
 chmod 755 "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
 
 # Create control file
-INSTALLED_SIZE=$((BINARY_SIZE / 1024))
+INSTALLED_SIZE=$(((BINARY_SIZE + WRAPPER_SIZE) / 1024))
 cat > "$DEB_STAGING/DEBIAN/control" << EOF
 Package: opencode
 Version: ${OPENCODE_VERSION}
 Architecture: aarch64
 Maintainer: Guy Sheffer <guysoft@gmail.com>
 Installed-Size: ${INSTALLED_SIZE}
-Depends: ripgrep
+Depends: ripgrep, proot
 Section: utils
 Priority: optional
 Homepage: https://github.com/anomalyco/opencode
@@ -117,7 +162,8 @@ echo "=== Packages created ==="
 echo ""
 ls -lh "$PKG_DIR"/*.{zip,xz,deb} 2>/dev/null
 echo ""
-echo "Install on Termux:"
+echo "ZIP layout: opencode (launcher) + opencode.bin (real binary)."
+echo "Install on Termux (requires: ripgrep, proot):"
 echo "  pacman -U $PACMAN_NAME"
 echo "  dpkg -i $DEB_NAME"
-echo "  unzip $ZIP_NAME -d /data/data/com.termux/files/usr/bin/"
+echo "  unzip $ZIP_NAME && mkdir -p \$PREFIX/libexec/opencode && mv opencode \$PREFIX/bin/ && mv opencode.bin \$PREFIX/libexec/opencode/"

@@ -8,25 +8,23 @@ OpenCode is an AI-powered coding assistant for the terminal. It uses [Bun](https
 
 ### Option 1: Standalone binary (easiest)
 
-> **Note:** The zip now contains a wrapper script (`opencode`), the main binary
-> (`opencode.bin`), and native libraries (`.so` files). All files must be
-> installed to their proper locations.
+> **Note:** The zip contains a launcher script (`opencode`) and the real
+> binary (`opencode.bin`). The launcher ensures a writable `/tmp` (via
+> `proot` when stock Android doesn't provide one). Install both to their
+> locations below.
 
 ```bash
 # Download the latest "opencode-*-android-aarch64.zip" from
-#   https://github.com/guysoft/opencode-termux/releases/latest
+#   https://github.com/re200484/opencode-termux/releases/latest
 # Then install:
 
-mkdir -p $PREFIX/libexec/opencode $PREFIX/lib
+pkg install unzip ripgrep proot
 unzip opencode-*-android-aarch64.zip
+mkdir -p $PREFIX/libexec/opencode
 mv opencode $PREFIX/bin/opencode
 chmod +x $PREFIX/bin/opencode
 mv opencode.bin $PREFIX/libexec/opencode/opencode.bin
 chmod +x $PREFIX/libexec/opencode/opencode.bin
-mv libtagfix.so libc++_shared.so libopentui.so $PREFIX/lib/
-
-# Install required dependency
-pkg install ripgrep
 
 # Run
 opencode
@@ -48,7 +46,7 @@ dpkg -i opencode-*-aarch64.deb
 opencode
 ```
 
-The pacman and deb packages automatically install `ripgrep` as a dependency.
+The pacman and deb packages automatically install `ripgrep` and `proot` as dependencies.
 
 ### After install
 
