@@ -58,6 +58,9 @@ if ! command -v proot >/dev/null 2>&1; then
     echo "opencode: run: pkg install proot" >&2
     exit 1
 fi
+# Some Android kernels block the seccomp acceleration proot relies on
+# (ptrace(TRACEME): Operation not permitted). Fall back to pure-ptrace mode.
+export PROOT_NO_SECCOMP=1
 exec proot -b "$TMPDIR:/tmp" "$BIN" "$@"
 LAUNCHER_EOF
 }
