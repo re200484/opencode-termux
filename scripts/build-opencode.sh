@@ -133,6 +133,7 @@ swap_libopentui() {
 }
 
 SWAP_LIST="$(mktemp)"
+DIST_LIST="$(mktemp)"
 restore_libopentui() {
     # Idempotent: safe to run twice (explicit call + EXIT trap).
     if [ -s "$SWAP_LIST" ]; then
@@ -143,6 +144,14 @@ restore_libopentui() {
         done < "$SWAP_LIST"
     fi
     rm -f "$SWAP_LIST"
+    if [ -s "$DIST_LIST" ]; then
+        while IFS= read -r patched; do
+            if [ -f "${patched}.termux-bak" ]; then
+                mv "${patched}.termux-bak" "$patched"
+            fi
+        done < "$DIST_LIST"
+    fi
+    rm -f "$DIST_LIST"
 }
 trap restore_libopentui EXIT
 swap_libopentui "@opentui/core-linux-arm64"
@@ -171,6 +180,25 @@ for scope in "$OPENCODE_SRC"/node_modules/.bun/@opentui+core@*/node_modules/@ope
             fi
         done
     done
+done
+
+# Redirect the ARM64 native import to the x64 package.
+# Even linked into scope, Bun.build leaves import("@opentui/core-linux-arm64")
+# external (only the host platform's import gets bundled), so the phone
+# crashes resolving the native library (undefined path). The x64 package IS
+# bundled, and its libopentui.so was already swapped with our Android ARM64
+# build above, so pointing the arm64 branch at it loads the right bytes.
+# (Applied to the @opentui/core dist chunks; restored afterwards like swaps.)
+echo ">>> Redirecting ARM64 native import to bundled x64 package..."
+# NOTE: in the published npm package the chunks sit directly in
+# @opentui/core/ (no dist/ subdirectory).
+find "$OPENCODE_SRC/node_modules" -path "*@opentui/core/chunk-*.js" -type f 2>/dev/null | while IFS= read -r chunk; do
+    if grep -q "core-linux-arm64" "$chunk"; then
+        cp "$chunk" "${chunk}.termux-bak"
+        echo "$chunk" >> "$DIST_LIST"
+        sed -i 's/@opentui\/core-linux-arm64/@opentui\/core-linux-x64/g' "$chunk"
+        echo "    patched $(basename "$chunk")"
+    fi
 done
 
 # Create dist directory
