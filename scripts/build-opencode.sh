@@ -31,12 +31,44 @@ else
     echo ">>> OpenCode source exists at $OPENCODE_SRC"
 fi
 
+# Apply Android patches to the OpenCode source tree (Termux compatibility
+# fixes that upstream does not carry). New patches go in patches/opencode/.
+OPENCODE_PATCH_DIR="$REPO_ROOT/patches/opencode"
+if [ -d "$OPENCODE_PATCH_DIR" ]; then
+    echo ">>> Applying OpenCode Android patches..."
+    cd "$OPENCODE_SRC"
+    for p in "$OPENCODE_PATCH_DIR"/*.patch; do
+        [ -f "$p" ] || continue
+        if git apply --check "$p" 2>/dev/null; then
+            git apply "$p"
+            echo "    Applied $(basename "$p")"
+        else
+            echo "    Skipping $(basename "$p") (already applied or does not apply)"
+        fi
+    done
+fi
+
 OPENCODE_PKG="$OPENCODE_SRC/packages/opencode"
 
 # Install OpenCode dependencies
 echo ">>> Installing OpenCode dependencies..."
 cd "$OPENCODE_SRC"
 "$HOST_BUN" install
+
+# Install native packages for ALL platforms (not just the host).
+# The phone is linux/arm64 but the build host is linux/x64: without this,
+# node_modules contains only @opentui/core-linux-x64 (plus watcher/fff x64
+# binaries), so the bundle embeds no ARM64 native assets and the TUI crashes
+# on device (undefined native library path). Same as upstream script/build.ts.
+echo ">>> Installing native packages for all platforms..."
+OPENTUI_VER="$("$HOST_BUN" -e 'console.log(require("./package.json").catalog["@opentui/core"])')"
+WATCHER_VER="$("$HOST_BUN" -e 'console.log(require("./packages/opencode/package.json").dependencies["@parcel/watcher"])')"
+FFF_VER="$("$HOST_BUN" -e 'console.log(require("./packages/opencode/package.json").dependencies["@ff-labs/fff-bun"])')"
+echo "    @opentui/core@${OPENTUI_VER}, @parcel/watcher@${WATCHER_VER}, @ff-labs/fff-bun@${FFF_VER}"
+"$HOST_BUN" install --os="*" --cpu="*" \
+    "@opentui/core@${OPENTUI_VER}" \
+    "@parcel/watcher@${WATCHER_VER}" \
+    "@ff-labs/fff-bun@${FFF_VER}"
 
 # Find the Android bun binary
 ANDROID_BUN="$BUN_BUILD/bun"
@@ -68,34 +100,78 @@ if [ ! -f "$ARM64_LIBOPENTUI" ]; then
     exit 1
 fi
 
-# Find x86_64 libopentui.so in node_modules and swap it
-# OpenCode uses @opentui/core-linux-x64 which has the x86_64 version
-OPENTUI_NODE_MODULE=""
-for candidate in \
-    "$OPENCODE_SRC/node_modules/@opentui/core-linux-x64/libopentui.so" \
-    "$OPENCODE_PKG/node_modules/@opentui/core-linux-x64/libopentui.so" \
-    "$OPENCODE_SRC/node_modules/.bun/@opentui+core-linux-x64@*/node_modules/@opentui/core-linux-x64/libopentui.so"
-do
-    # Handle glob
-    for f in $candidate; do
-        if [ -f "$f" ]; then
-            OPENTUI_NODE_MODULE="$f"
-            break 2
-        fi
+# Swap the prebuilt libopentui.so files in node_modules with our Android build.
+# The phone (linux/arm64) loads @opentui/core-linux-arm64 at runtime; the x64
+# copy is swapped too so any embedded/host reference stays consistent.
+swap_libopentui() {
+    local pkg="$1"   # e.g. @opentui/core-linux-x64
+    # bun's isolated install dirs use '+' instead of '/' in package names
+    local pkg_bun="${pkg//\//+}"
+    local found=""
+    local candidate f
+    for candidate in \
+        "$OPENCODE_SRC/node_modules/${pkg}/libopentui.so" \
+        "$OPENCODE_PKG/node_modules/${pkg}/libopentui.so" \
+        "$OPENCODE_SRC/node_modules/.bun/${pkg_bun}@*/node_modules/${pkg}/libopentui.so"
+    do
+        # Handle glob
+        for f in $candidate; do
+            if [ -f "$f" ]; then
+                found="$f"
+                break 2
+            fi
+        done
+    done
+    if [ -z "$found" ]; then
+        echo "WARNING: Could not find ${pkg}/libopentui.so in node_modules"
+        return 0
+    fi
+    echo ">>> Swapping ${pkg}/libopentui.so with Android ARM64 version..."
+    cp "$found" "${found}.x64.bak"
+    cp "$ARM64_LIBOPENTUI" "$found"
+    echo "$found" >> "$SWAP_LIST"
+}
+
+SWAP_LIST="$(mktemp)"
+restore_libopentui() {
+    # Idempotent: safe to run twice (explicit call + EXIT trap).
+    if [ -s "$SWAP_LIST" ]; then
+        while IFS= read -r swapped; do
+            if [ -f "${swapped}.x64.bak" ]; then
+                mv "${swapped}.x64.bak" "$swapped"
+            fi
+        done < "$SWAP_LIST"
+    fi
+    rm -f "$SWAP_LIST"
+}
+trap restore_libopentui EXIT
+swap_libopentui "@opentui/core-linux-arm64"
+swap_libopentui "@opentui/core-linux-x64"
+if [ ! -s "$SWAP_LIST" ]; then
+    echo "WARNING: No libopentui.so found to swap - the build may embed the wrong architecture"
+fi
+
+# Link non-host platform packages into @opentui/core's isolated scope.
+# bun install links only the HOST platform's optionals next to @opentui/core,
+# so Bun.build cannot resolve import("@opentui/core-linux-arm64") and leaves
+# it external -> the TUI crashes on the phone with an undefined library path.
+# Symlinking the store copies into the scope makes the import bundlable.
+echo ">>> Linking platform packages into @opentui/core scope..."
+for scope in "$OPENCODE_SRC"/node_modules/.bun/@opentui+core@*/node_modules/@opentui; do
+    [ -d "$scope" ] || continue
+    for plat_store in "$OPENCODE_SRC"/node_modules/.bun/@opentui+core-linux-*@/node_modules/@opentui \
+                      "$OPENCODE_SRC"/node_modules/.bun/@opentui+core-linux-*@*/node_modules/@opentui; do
+        [ -d "$plat_store" ] || continue
+        for pkg_dir in "$plat_store"/*; do
+            [ -d "$pkg_dir" ] || continue
+            pkg_name="$(basename "$pkg_dir")"
+            if [ ! -e "$scope/$pkg_name" ]; then
+                ln -s "$pkg_dir" "$scope/$pkg_name"
+                echo "    linked $pkg_name"
+            fi
+        done
     done
 done
-
-BACKUP_FILE=""
-if [ -n "$OPENTUI_NODE_MODULE" ]; then
-    echo ">>> Swapping x86_64 libopentui.so with ARM64 version..."
-    BACKUP_FILE="${OPENTUI_NODE_MODULE}.x64.bak"
-    cp "$OPENTUI_NODE_MODULE" "$BACKUP_FILE"
-    cp "$ARM64_LIBOPENTUI" "$OPENTUI_NODE_MODULE"
-    echo "    Backed up to $BACKUP_FILE"
-else
-    echo "WARNING: Could not find x86_64 libopentui.so in node_modules"
-    echo "         The build may embed the wrong architecture"
-fi
 
 # Create dist directory
 mkdir -p "$DIST_DIR"
@@ -118,11 +194,9 @@ OPENCODE_VERSION="$OPENCODE_VERSION" \
 # Clean up copied script
 rm -f "$BUILD_SCRIPT_LOCAL"
 
-# Restore original libopentui.so
-if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
-    echo ">>> Restoring original x86_64 libopentui.so..."
-    mv "$BACKUP_FILE" "$OPENTUI_NODE_MODULE"
-fi
+# Restore original libopentui.so files (also runs via EXIT trap on failure)
+restore_libopentui
+echo ">>> Restored original libopentui.so files"
 
 # Verify output
 OPENCODE_BINARY="$DIST_DIR/opencode"

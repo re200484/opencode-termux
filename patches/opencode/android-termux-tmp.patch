@@ -1,0 +1,16 @@
+diff --git a/packages/core/src/global.ts b/packages/core/src/global.ts
+--- a/packages/core/src/global.ts
++++ b/packages/core/src/global.ts
+@@ -12,7 +12,11 @@ const data = path.join(xdgData!, app)
+ const cache = path.join(xdgCache!, app)
+ const config = path.join(xdgConfig!, app)
+ const state = path.join(xdgState!, app)
+-const tmp = path.join(os.tmpdir(), app)
++// Android/Termux: Bun's os.tmpdir() ignores TMPDIR on Bionic and falls back
++// to the unwritable /tmp, crashing startup with EACCES (mkdir '/tmp/opencode').
++// Derive tmp from the XDG cache dir instead, which strace-verified resolves
++// under $HOME on Termux like all the other paths above.
++const tmp = path.join(cache, "tmp")
+ 
+ const paths = {
+   get home() {
