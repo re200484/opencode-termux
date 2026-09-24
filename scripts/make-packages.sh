@@ -24,6 +24,26 @@ fi
 
 echo "=== Creating packages for OpenCode v${OPENCODE_VERSION} ==="
 
+# Native asset tree for the OTUI_ASSET_ROOT bypass (see launcher).
+# Key layout required by @opentui/core: <root>/@opentui/core-linux-arm64/libopentui.so
+ARM64_SO=""
+for candidate in \
+    "$OPENTUI_SRC/packages/core/src/lib/aarch64-linux-android/libopentui.so" \
+    "$OPENTUI_SRC/packages/lib/aarch64-linux-android/libopentui.so"
+do
+    if [ -f "$candidate" ]; then
+        ARM64_SO="$candidate"
+        break
+    fi
+done
+if [ -z "$ARM64_SO" ]; then
+    echo "ERROR: ARM64 libopentui.so not found under $OPENTUI_SRC"
+    echo "       Run scripts/build-opentui.sh first."
+    exit 1
+fi
+echo ">>> Android libopentui.so for asset tree: $ARM64_SO"
+ASSET_SIZE=$(stat -c%s "$ARM64_SO")
+
 BINARY_SIZE=$(stat -c%s "$OPENCODE_BINARY")
 BUILD_DATE=$(date +%s)
 
@@ -50,6 +70,11 @@ if [ ! -x "$BIN" ]; then
 fi
 : "${TMPDIR:=$PREFIX/tmp}"
 mkdir -p "$TMPDIR" 2>/dev/null || true
+# Native library bypass: @opentui/core resolves its .so via OTUI_ASSET_ROOT
+# before attempting any import. Bare package imports do not resolve inside
+# the standalone binary, so the ARM64 .so ships as a real file and is found
+# here. Without this the TUI crashes with 'loadedPath.startsWith' on undefined.
+export OTUI_ASSET_ROOT="$PREFIX/lib/opentui-assets"
 if [ -d /tmp ] && [ -w /tmp ]; then
     exec "$BIN" "$@"
 fi
@@ -74,11 +99,13 @@ ZIP_STAGING="$PKG_DIR/zip-staging"
 mkdir -p "$ZIP_STAGING"
 cp "$OPENCODE_BINARY" "$ZIP_STAGING/opencode.bin"
 chmod 755 "$ZIP_STAGING/opencode.bin"
+mkdir -p "$ZIP_STAGING/opentui-assets/@opentui/core-linux-arm64"
+cp "$ARM64_SO" "$ZIP_STAGING/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
 write_termux_launcher "$ZIP_STAGING/opencode"
 chmod 755 "$ZIP_STAGING/opencode"
 WRAPPER_SIZE=$(stat -c%s "$ZIP_STAGING/opencode")
 cd "$ZIP_STAGING"
-zip -9 "$PKG_DIR/$ZIP_NAME" opencode opencode.bin
+zip -9 -r "$PKG_DIR/$ZIP_NAME" opencode opencode.bin opentui-assets
 echo "    Created $ZIP_NAME"
 
 # ==========================================
@@ -88,9 +115,11 @@ echo ">>> Creating pacman package..."
 PACMAN_STAGING="$PKG_DIR/pacman-staging"
 mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/bin"
 mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode"
+mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64"
 
 cp "$OPENCODE_BINARY" "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
 chmod 755 "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
+cp "$ARM64_SO" "$PACMAN_STAGING/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
 write_termux_launcher "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
 chmod 755 "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
 
@@ -102,7 +131,7 @@ pkgdesc = AI-powered coding assistant for the terminal
 url = https://github.com/anomalyco/opencode
 builddate = ${BUILD_DATE}
 packager = opencode-termux
-size = $((BINARY_SIZE + WRAPPER_SIZE))
+size = $((BINARY_SIZE + WRAPPER_SIZE + ASSET_SIZE))
 arch = aarch64
 license = MIT
 depend = ripgrep
@@ -121,15 +150,17 @@ echo ">>> Creating deb package..."
 DEB_STAGING="$PKG_DIR/deb-staging"
 mkdir -p "$DEB_STAGING/data/data/data/com.termux/files/usr/bin"
 mkdir -p "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode"
+mkdir -p "$DEB_STAGING/data/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64"
 mkdir -p "$DEB_STAGING/DEBIAN"
 
 cp "$OPENCODE_BINARY" "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
 chmod 755 "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
+cp "$ARM64_SO" "$DEB_STAGING/data/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
 write_termux_launcher "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
 chmod 755 "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
 
 # Create control file
-INSTALLED_SIZE=$(((BINARY_SIZE + WRAPPER_SIZE) / 1024))
+INSTALLED_SIZE=$(((BINARY_SIZE + WRAPPER_SIZE + ASSET_SIZE) / 1024))
 cat > "$DEB_STAGING/DEBIAN/control" << EOF
 Package: opencode
 Version: ${OPENCODE_VERSION}
@@ -165,8 +196,8 @@ echo "=== Packages created ==="
 echo ""
 ls -lh "$PKG_DIR"/*.{zip,xz,deb} 2>/dev/null
 echo ""
-echo "ZIP layout: opencode (launcher) + opencode.bin (real binary)."
+echo "ZIP layout: opencode (launcher) + opencode.bin (real binary) + opentui-assets/."
 echo "Install on Termux (requires: ripgrep, proot):"
 echo "  pacman -U $PACMAN_NAME"
 echo "  dpkg -i $DEB_NAME"
-echo "  unzip $ZIP_NAME && mkdir -p \$PREFIX/libexec/opencode && mv opencode \$PREFIX/bin/ && mv opencode.bin \$PREFIX/libexec/opencode/"
+echo "  unzip $ZIP_NAME && mkdir -p \$PREFIX/libexec/opencode && mv opencode \$PREFIX/bin/ && mv opencode.bin \$PREFIX/libexec/opencode/ && mv opentui-assets \$PREFIX/lib/"

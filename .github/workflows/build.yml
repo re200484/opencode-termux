@@ -325,6 +325,7 @@ jobs:
             mkdir -p $PREFIX/libexec/opencode
             mv opencode $PREFIX/bin/opencode
             mv opencode.bin $PREFIX/libexec/opencode/opencode.bin
+            mv opentui-assets $PREFIX/lib/opentui-assets
             chmod +x $PREFIX/bin/opencode
             ```
 

@@ -61,7 +61,7 @@ cd "$OPENCODE_SRC"
 # binaries), so the bundle embeds no ARM64 native assets and the TUI crashes
 # on device (undefined native library path). Same as upstream script/build.ts.
 echo ">>> Installing native packages for all platforms..."
-OPENTUI_VER="$("$HOST_BUN" -e 'console.log(require("./package.json").catalog["@opentui/core"])')"
+OPENTUI_VER="$("$HOST_BUN" -e 'console.log(require("./package.json").workspaces.catalog["@opentui/core"])')"
 WATCHER_VER="$("$HOST_BUN" -e 'console.log(require("./packages/opencode/package.json").dependencies["@parcel/watcher"])')"
 FFF_VER="$("$HOST_BUN" -e 'console.log(require("./packages/opencode/package.json").dependencies["@ff-labs/fff-bun"])')"
 echo "    @opentui/core@${OPENTUI_VER}, @parcel/watcher@${WATCHER_VER}, @ff-labs/fff-bun@${FFF_VER}"
