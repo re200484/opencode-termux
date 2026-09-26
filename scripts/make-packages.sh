@@ -149,7 +149,6 @@ cp "$WRAPPER_SCRIPT" "$PACMAN_USR/bin/opencode"
 cp "$OPENCODE_BINARY" "$PACMAN_USR/libexec/opencode/opencode.bin"
 cp "$PARSER_WORKER" "$PACMAN_USR/libexec/opencode/parser.worker.js"
 cp "$PKG_DIR/libtagfix.so" "$PACMAN_USR/lib/libtagfix.so"
-cp "$PKG_DIR/libc++_shared.so" "$PACMAN_USR/lib/libc++_shared.so"
 cp -a "$PKG_DIR/opentui-assets" "$PACMAN_USR/lib/opentui-assets"
 [ -n "$PTY_ADDED" ] && cp "$PKG_DIR/librust_pty_arm64.so" "$PACMAN_USR/lib/librust_pty_arm64.so"
 chmod 755 "$PACMAN_USR/bin/opencode" "$PACMAN_USR/libexec/opencode/opencode.bin"
@@ -165,6 +164,7 @@ size = $((BINARY_SIZE / 1024))
 arch = aarch64
 license = MIT
 depend = ripgrep
+depend = libc++
 EOF
 
 PACMAN_NAME="opencode-${OPENCODE_VERSION}-1-aarch64.pkg.tar.xz"
@@ -182,7 +182,6 @@ cp "$WRAPPER_SCRIPT" "$DEB_USR/bin/opencode"
 cp "$OPENCODE_BINARY" "$DEB_USR/libexec/opencode/opencode.bin"
 cp "$PARSER_WORKER" "$DEB_USR/libexec/opencode/parser.worker.js"
 cp "$PKG_DIR/libtagfix.so" "$DEB_USR/lib/libtagfix.so"
-cp "$PKG_DIR/libc++_shared.so" "$DEB_USR/lib/libc++_shared.so"
 cp -a "$PKG_DIR/opentui-assets" "$DEB_USR/lib/opentui-assets"
 [ -n "$PTY_ADDED" ] && cp "$PKG_DIR/librust_pty_arm64.so" "$DEB_USR/lib/librust_pty_arm64.so"
 chmod 755 "$DEB_USR/bin/opencode" "$DEB_USR/libexec/opencode/opencode.bin"
@@ -193,7 +192,7 @@ Version: ${OPENCODE_VERSION}
 Architecture: aarch64
 Maintainer: Guy Sheffer <guysoft@gmail.com>
 Installed-Size: $((BINARY_SIZE / 1024))
-Depends: ripgrep
+Depends: libc++, ripgrep
 Section: utils
 Priority: optional
 Homepage: https://github.com/anomalyco/opencode
