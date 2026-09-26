@@ -1,0 +1,19 @@
+diff --git a/packages/tui/src/audio.ts b/packages/tui/src/audio.ts
+index 2f8a0b6..6af23e9 100644
+--- a/packages/tui/src/audio.ts
++++ b/packages/tui/src/audio.ts
+@@ -4,7 +4,14 @@ import { readFile } from "node:fs/promises"
+ let audio: Audio | null | undefined
+ const sounds = new Map<string, Promise<AudioSound | null>>()
+ 
++// Android/Termux: OpenTUI audio group handling panics on Android; force-disable.
++const disableAudio = true
++
+ function getAudio() {
++  if (disableAudio) {
++    audio = null
++    return null
++  }
+   if (audio !== undefined) return audio
+   try {
+     const next = Audio.create({ autoStart: false })
