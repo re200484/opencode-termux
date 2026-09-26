@@ -9,10 +9,10 @@ OpenCode is an AI-powered coding assistant for the terminal. It uses [Bun](https
 ### Option 1: Standalone binary (easiest)
 
 > **Note:** The zip contains a launcher script (`opencode`), the real
-> binary (`opencode.bin`), and the native TUI library (`opentui-assets/`).
-> The launcher ensures a writable `/tmp` (via `proot` when stock Android
-> doesn't provide one) and points the TUI at its native library. Install
-> all three to their locations below.
+> binary (`opencode.bin`), the tree-sitter worker (`parser.worker.js`) and
+> the native TUI library (`opentui-assets/`). The launcher ensures a
+> writable `/tmp` (via `proot` when stock Android doesn't provide one) and
+> points the TUI at its native library. Install all of them below.
 
 ```bash
 # Download the latest "opencode-*-android-aarch64.zip" from
@@ -26,6 +26,7 @@ mv opencode $PREFIX/bin/opencode
 chmod +x $PREFIX/bin/opencode
 mv opencode.bin $PREFIX/libexec/opencode/opencode.bin
 chmod +x $PREFIX/libexec/opencode/opencode.bin
+mv parser.worker.js $PREFIX/libexec/opencode/parser.worker.js
 mv opentui-assets $PREFIX/lib/opentui-assets
 
 # Run

@@ -124,8 +124,14 @@ console.log(`Parser worker: ${parserWorkerResolved}`)
 // ./src/cli/tui/worker.ts and the old path no longer exists.)
 const workerPath = "./src/cli/tui/worker.ts"
 
-const bunfsRoot = "/$bunfs/root/"
-const workerRelativePath = path.relative(OPENCODE_DIR, parserWorkerResolved).replaceAll("\\", "/")
+// NOTE on the tree-sitter parser worker: it must NOT be passed as an
+// entrypoint. Doing so makes @opentui/core's
+// `import(".../parser.worker", { type: "file" })` resolve to an inlined module
+// without a default export, which crashes opentui at module load with
+// "undefined is not an object (evaluating 'loadedPath.startsWith')".
+// Instead, build-opencode.sh ships parser.worker.js as a real file next to the
+// binary and the launcher points OTUI_TREE_SITTER_WORKER_PATH at it (that env
+// var is checked first by @opentui/core's resolveWorkerPath()).
 
 await $`rm -rf ${OUTPUT_DIR}`
 await $`mkdir -p ${OUTPUT_DIR}`
@@ -151,7 +157,7 @@ const result = await Bun.build({
     outfile: hostBinaryPath,
     execArgv: [`--user-agent=opencode/${VERSION}`, "--use-system-ca", "--"],
   },
-  entrypoints: ["./src/index.ts", parserWorkerResolved, workerPath],
+  entrypoints: ["./src/index.ts", workerPath],
   define: {
     OPENCODE_VERSION: `'${VERSION}'`,
     OPENCODE_MIGRATIONS: JSON.stringify(migrations),
@@ -159,7 +165,10 @@ const result = await Bun.build({
     // as a raw JSON expression, same as upstream script/build.ts).
     // models-snapshot.js above is legacy (pre-1.4 layout) and now unused.
     OPENCODE_MODELS_DEV: modelsData,
-    OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
+    // NOTE: OTUI_TREE_SITTER_WORKER_PATH is intentionally NOT defined here.
+    // The worker is shipped as a real file and the launcher sets that env var
+    // at runtime (checked first by @opentui/core); a compile-time value would
+    // point at a bundled path that does not exist in this build.
     OPENCODE_WORKER_PATH: workerPath,
     OPENCODE_CHANNEL: `'${CHANNEL}'`,
     OPENCODE_LIBC: "",

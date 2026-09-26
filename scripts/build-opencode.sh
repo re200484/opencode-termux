@@ -182,24 +182,52 @@ for scope in "$OPENCODE_SRC"/node_modules/.bun/@opentui+core@*/node_modules/@ope
     done
 done
 
-# Redirect the ARM64 native import to the x64 package.
-# Even linked into scope, Bun.build leaves import("@opentui/core-linux-arm64")
-# external (only the host platform's import gets bundled), so the phone
-# crashes resolving the native library (undefined path). The x64 package IS
-# bundled, and its libopentui.so was already swapped with our Android ARM64
-# build above, so pointing the arm64 branch at it loads the right bytes.
-# (Applied to the @opentui/core dist chunks; restored afterwards like swaps.)
-echo ">>> Redirecting ARM64 native import to bundled x64 package..."
+# Patch @opentui/core's asset loader for the standalone binary.
+#
+# Two fixes, both required:
+#  1. resolveAssetRootPath() THROWS when a key is absent under
+#     OTUI_ASSET_ROOT. We set that root to point the loader at the ARM64
+#     libopentui.so we ship as a real file (bare package imports do not
+#     resolve inside the standalone), so any other asset lookup
+#     (tree-sitter wasm/scm) would hard-fail. Return undefined instead and
+#     let those fall back to their normal handling.
+#  2. The tree-sitter parser worker resolves via
+#     import("@opentui/core/parser.worker", { type: "file" }), which yields a
+#     module with NO default export in this build, so
+#     normalizeLoadedFilePath(undefined) throws at module load:
+#     "undefined is not an object (evaluating 'loadedPath.startsWith')".
+#     Return undefined for undefined input; the worker path is then supplied
+#     at runtime via OTUI_TREE_SITTER_WORKER_PATH (checked first by
+#     resolveWorkerPath()).
+echo ">>> Patching OpenTUI asset loader for standalone..."
 # NOTE: in the published npm package the chunks sit directly in
 # @opentui/core/ (no dist/ subdirectory).
-find "$OPENCODE_SRC/node_modules" -path "*@opentui/core/chunk-*.js" -type f 2>/dev/null | while IFS= read -r chunk; do
-    if grep -q "core-linux-arm64" "$chunk"; then
+while IFS= read -r chunk; do
+    if grep -q "Missing OpenTUI asset" "$chunk"; then
         cp "$chunk" "${chunk}.termux-bak"
         echo "$chunk" >> "$DIST_LIST"
-        sed -i 's/@opentui\/core-linux-arm64/@opentui\/core-linux-x64/g' "$chunk"
+        sed -i 's/throw new Error(`Missing OpenTUI asset.*/return;/' "$chunk"
+        sed -i '/^function normalizeLoadedFilePath(loadedPath, baseUrl) {$/a\  if (loadedPath === undefined) return;' "$chunk"
         echo "    patched $(basename "$chunk")"
     fi
-done
+done < <(find "$OPENCODE_SRC/node_modules" -path "*@opentui/core/chunk-*.js" -type f 2>/dev/null)
+
+# Fail loudly if the patches did not land: without them the TUI crashes at
+# startup, which is worse than a red CI run.
+if find "$OPENCODE_SRC/node_modules" -path "*@opentui/core/chunk-*.js" -type f \
+        -exec grep -l "Missing OpenTUI asset" {} + 2>/dev/null | grep -q .; then
+    echo "ERROR: OpenTUI asset-loader patch did not apply."
+    echo "       Upstream chunk changed; update the seds above."
+    exit 1
+fi
+if ! grep -rq "if (loadedPath === undefined) return;" "$OPENCODE_SRC/node_modules/.bun"/@opentui+core@*/node_modules/@opentui/core/chunk-bun-*.js 2>/dev/null; then
+    echo "ERROR: OpenTUI normalizeLoadedFilePath guard did not apply."
+    exit 1
+fi
+
+# NOTE: @opentui/core resolves its parser worker (tree-sitter) and native
+# library through file assets. Those are set up in scripts/build-opencode-android.ts
+# (files/entrypoints/define), mirroring upstream script/build.ts.
 
 # Create dist directory
 mkdir -p "$DIST_DIR"
@@ -225,6 +253,19 @@ rm -f "$BUILD_SCRIPT_LOCAL"
 # Restore original libopentui.so files (also runs via EXIT trap on failure)
 restore_libopentui
 echo ">>> Restored original libopentui.so files"
+
+# Ship the tree-sitter parser worker as a real file. The standalone cannot
+# resolve it through import("@opentui/core/parser.worker", { type: "file" })
+# (module without default export), so the launcher points
+# OTUI_TREE_SITTER_WORKER_PATH at this copy instead. Packages pick it up from
+# DIST_DIR.
+PARSER_WORKER="$(find "$OPENCODE_SRC/node_modules" -path "*@opentui/core/parser.worker.js" -type f 2>/dev/null | head -1)"
+if [ -z "$PARSER_WORKER" ]; then
+    echo "ERROR: parser.worker.js not found in $OPENCODE_SRC/node_modules"
+    exit 1
+fi
+cp "$PARSER_WORKER" "$DIST_DIR/parser.worker.js"
+echo ">>> Parser worker shipped: $PARSER_WORKER"
 
 # Verify output
 OPENCODE_BINARY="$DIST_DIR/opencode"

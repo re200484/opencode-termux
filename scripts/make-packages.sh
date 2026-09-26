@@ -44,6 +44,15 @@ fi
 echo ">>> Android libopentui.so for asset tree: $ARM64_SO"
 ASSET_SIZE=$(stat -c%s "$ARM64_SO")
 
+# Tree-sitter parser worker, shipped as a real file (see launcher).
+PARSER_WORKER="$DIST_DIR/parser.worker.js"
+if [ ! -f "$PARSER_WORKER" ]; then
+    echo "ERROR: parser.worker.js not found at $PARSER_WORKER"
+    echo "       Run scripts/build-opencode.sh first."
+    exit 1
+fi
+WORKER_SIZE=$(stat -c%s "$PARSER_WORKER")
+
 BINARY_SIZE=$(stat -c%s "$OPENCODE_BINARY")
 BUILD_DATE=$(date +%s)
 
@@ -75,6 +84,9 @@ mkdir -p "$TMPDIR" 2>/dev/null || true
 # the standalone binary, so the ARM64 .so ships as a real file and is found
 # here. Without this the TUI crashes with 'loadedPath.startsWith' on undefined.
 export OTUI_ASSET_ROOT="$PREFIX/lib/opentui-assets"
+# Tree-sitter parser worker: the standalone cannot resolve it via import, so
+# point @opentui/core at the copy shipped next to the binary.
+export OTUI_TREE_SITTER_WORKER_PATH="$PREFIX/libexec/opencode/parser.worker.js"
 if [ -d /tmp ] && [ -w /tmp ]; then
     exec "$BIN" "$@"
 fi
@@ -99,13 +111,14 @@ ZIP_STAGING="$PKG_DIR/zip-staging"
 mkdir -p "$ZIP_STAGING"
 cp "$OPENCODE_BINARY" "$ZIP_STAGING/opencode.bin"
 chmod 755 "$ZIP_STAGING/opencode.bin"
+cp "$PARSER_WORKER" "$ZIP_STAGING/parser.worker.js"
 mkdir -p "$ZIP_STAGING/opentui-assets/@opentui/core-linux-arm64"
 cp "$ARM64_SO" "$ZIP_STAGING/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
 write_termux_launcher "$ZIP_STAGING/opencode"
 chmod 755 "$ZIP_STAGING/opencode"
 WRAPPER_SIZE=$(stat -c%s "$ZIP_STAGING/opencode")
 cd "$ZIP_STAGING"
-zip -9 -r "$PKG_DIR/$ZIP_NAME" opencode opencode.bin opentui-assets
+zip -9 -r "$PKG_DIR/$ZIP_NAME" opencode opencode.bin parser.worker.js opentui-assets
 echo "    Created $ZIP_NAME"
 
 # ==========================================
@@ -119,6 +132,7 @@ mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/lib/opentui-assets/@ope
 
 cp "$OPENCODE_BINARY" "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
 chmod 755 "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
+cp "$PARSER_WORKER" "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/parser.worker.js"
 cp "$ARM64_SO" "$PACMAN_STAGING/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
 write_termux_launcher "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
 chmod 755 "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
@@ -131,7 +145,7 @@ pkgdesc = AI-powered coding assistant for the terminal
 url = https://github.com/anomalyco/opencode
 builddate = ${BUILD_DATE}
 packager = opencode-termux
-size = $((BINARY_SIZE + WRAPPER_SIZE + ASSET_SIZE))
+size = $((BINARY_SIZE + WRAPPER_SIZE + ASSET_SIZE + WORKER_SIZE))
 arch = aarch64
 license = MIT
 depend = ripgrep
@@ -155,12 +169,13 @@ mkdir -p "$DEB_STAGING/DEBIAN"
 
 cp "$OPENCODE_BINARY" "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
 chmod 755 "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
+cp "$PARSER_WORKER" "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/parser.worker.js"
 cp "$ARM64_SO" "$DEB_STAGING/data/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
 write_termux_launcher "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
 chmod 755 "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
 
 # Create control file
-INSTALLED_SIZE=$(((BINARY_SIZE + WRAPPER_SIZE + ASSET_SIZE) / 1024))
+INSTALLED_SIZE=$(((BINARY_SIZE + WRAPPER_SIZE + ASSET_SIZE + WORKER_SIZE) / 1024))
 cat > "$DEB_STAGING/DEBIAN/control" << EOF
 Package: opencode
 Version: ${OPENCODE_VERSION}
@@ -196,8 +211,8 @@ echo "=== Packages created ==="
 echo ""
 ls -lh "$PKG_DIR"/*.{zip,xz,deb} 2>/dev/null
 echo ""
-echo "ZIP layout: opencode (launcher) + opencode.bin (real binary) + opentui-assets/."
+echo "ZIP layout: opencode (launcher) + opencode.bin + parser.worker.js + opentui-assets/."
 echo "Install on Termux (requires: ripgrep, proot):"
 echo "  pacman -U $PACMAN_NAME"
 echo "  dpkg -i $DEB_NAME"
-echo "  unzip $ZIP_NAME && mkdir -p \$PREFIX/libexec/opencode && mv opencode \$PREFIX/bin/ && mv opencode.bin \$PREFIX/libexec/opencode/ && mv opentui-assets \$PREFIX/lib/"
+echo "  unzip $ZIP_NAME && mkdir -p \$PREFIX/libexec/opencode && mv opencode \$PREFIX/bin/ && mv opencode.bin parser.worker.js \$PREFIX/libexec/opencode/ && mv opentui-assets \$PREFIX/lib/"

@@ -324,7 +324,7 @@ jobs:
             unzip opencode-*-android-aarch64.zip
             mkdir -p $PREFIX/libexec/opencode
             mv opencode $PREFIX/bin/opencode
-            mv opencode.bin $PREFIX/libexec/opencode/opencode.bin
+            mv opencode.bin parser.worker.js $PREFIX/libexec/opencode/
             mv opentui-assets $PREFIX/lib/opentui-assets
             chmod +x $PREFIX/bin/opencode
             ```
