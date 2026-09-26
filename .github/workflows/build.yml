@@ -9,7 +9,7 @@ on:
       opencode_version:
         description: 'OpenCode version to build'
         required: false
-        default: '1.18.30'
+        default: '1.18.32'
 
 # actions/cache (save/restore), upload-artifact and releases all need
 # write access. Without this block, repos with restricted default
@@ -20,7 +20,7 @@ permissions:
 
 env:
   BUN_VERSION: "1.2.13"
-  OPENCODE_VERSION: "1.18.30"
+  OPENCODE_VERSION: "1.18.32"
   OPENTUI_VERSION: "v0.4.5"
   ANDROID_API: "24"
   ANDROID_NDK_VERSION: "28.1.13356709"
