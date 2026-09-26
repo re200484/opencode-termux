@@ -42,7 +42,22 @@ if [ -z "$ARM64_SO" ]; then
     exit 1
 fi
 echo ">>> Android libopentui.so for asset tree: $ARM64_SO"
-ASSET_SIZE=$(stat -c%s "$ARM64_SO")
+ASSET_SIZE=$(( $(stat -c%s "$ARM64_SO") * 2 ))
+
+# @opentui/core looks the native library up through OTUI_ASSET_ROOT using the
+# package key of the arch the bundle was COMPILED on: Bun constant-folds
+# `process.platform`/`process.arch` inside the standalone bundle at build time.
+# The build runs on the CI x86_64 runner, so the runtime asks for
+# "@opentui/core-linux-x64/libopentui.so" even though it runs on arm64.
+# Ship the ARM64 .so under BOTH keys so the lookup always hits, whatever arch
+# the bundle happened to be compiled on.
+write_opentui_assets() {
+    local root="$1" key
+    for key in "@opentui/core-linux-x64" "@opentui/core-linux-arm64"; do
+        mkdir -p "$root/$key"
+        cp "$ARM64_SO" "$root/$key/libopentui.so"
+    done
+}
 
 # Tree-sitter parser worker, shipped as a real file (see launcher).
 PARSER_WORKER="$DIST_DIR/parser.worker.js"
@@ -81,8 +96,9 @@ fi
 mkdir -p "$TMPDIR" 2>/dev/null || true
 # Native library bypass: @opentui/core resolves its .so via OTUI_ASSET_ROOT
 # before attempting any import. Bare package imports do not resolve inside
-# the standalone binary, so the ARM64 .so ships as a real file and is found
-# here. Without this the TUI crashes with 'loadedPath.startsWith' on undefined.
+# the standalone binary, so the ARM64 .so ships as a real file (under both the
+# core-linux-x64 and core-linux-arm64 keys) and is found here. Without this the
+# TUI crashes with 'loadedPath.startsWith' on undefined.
 export OTUI_ASSET_ROOT="$PREFIX/lib/opentui-assets"
 # Tree-sitter parser worker: the standalone cannot resolve it via import, so
 # point @opentui/core at the copy shipped next to the binary.
@@ -112,8 +128,7 @@ mkdir -p "$ZIP_STAGING"
 cp "$OPENCODE_BINARY" "$ZIP_STAGING/opencode.bin"
 chmod 755 "$ZIP_STAGING/opencode.bin"
 cp "$PARSER_WORKER" "$ZIP_STAGING/parser.worker.js"
-mkdir -p "$ZIP_STAGING/opentui-assets/@opentui/core-linux-arm64"
-cp "$ARM64_SO" "$ZIP_STAGING/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
+write_opentui_assets "$ZIP_STAGING/opentui-assets"
 write_termux_launcher "$ZIP_STAGING/opencode"
 chmod 755 "$ZIP_STAGING/opencode"
 WRAPPER_SIZE=$(stat -c%s "$ZIP_STAGING/opencode")
@@ -128,12 +143,11 @@ echo ">>> Creating pacman package..."
 PACMAN_STAGING="$PKG_DIR/pacman-staging"
 mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/bin"
 mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode"
-mkdir -p "$PACMAN_STAGING/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64"
+write_opentui_assets "$PACMAN_STAGING/data/data/com.termux/files/usr/lib/opentui-assets"
 
 cp "$OPENCODE_BINARY" "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
 chmod 755 "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
 cp "$PARSER_WORKER" "$PACMAN_STAGING/data/data/com.termux/files/usr/libexec/opencode/parser.worker.js"
-cp "$ARM64_SO" "$PACMAN_STAGING/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
 write_termux_launcher "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
 chmod 755 "$PACMAN_STAGING/data/data/com.termux/files/usr/bin/opencode"
 
@@ -164,13 +178,12 @@ echo ">>> Creating deb package..."
 DEB_STAGING="$PKG_DIR/deb-staging"
 mkdir -p "$DEB_STAGING/data/data/data/com.termux/files/usr/bin"
 mkdir -p "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode"
-mkdir -p "$DEB_STAGING/data/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64"
+write_opentui_assets "$DEB_STAGING/data/data/data/com.termux/files/usr/lib/opentui-assets"
 mkdir -p "$DEB_STAGING/DEBIAN"
 
 cp "$OPENCODE_BINARY" "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
 chmod 755 "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/opencode.bin"
 cp "$PARSER_WORKER" "$DEB_STAGING/data/data/data/com.termux/files/usr/libexec/opencode/parser.worker.js"
-cp "$ARM64_SO" "$DEB_STAGING/data/data/data/com.termux/files/usr/lib/opentui-assets/@opentui/core-linux-arm64/libopentui.so"
 write_termux_launcher "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
 chmod 755 "$DEB_STAGING/data/data/data/com.termux/files/usr/bin/opencode"
 
