@@ -1,0 +1,93 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# opencode — Termux/Android wrapper
+#
+# Ported from guysoft/opencode-termux feature/opencode-latest (proven on 1.17.x).
+# Responsibilities:
+#   1. LD_PRELOAD libtagfix.so — disable bionic software TBI heap tagging before
+#      JSC initialises. Without it Android 11+ aborts on free() with
+#      "Pointer tag for 0x... was truncated" (SIGABRT).
+#   2. LD_LIBRARY_PATH to the shipped lib dir — Bun's JIT-compiled modules need
+#      libc++_shared.so, which Android's /system/lib64 does not provide.
+#   3. Point @opentui/core at a real filesystem libopentui.so (OTUI_ASSET_ROOT),
+#      because Bun's /$bunfs/root/ virtual paths are not intercepted on Android.
+#   4. Disable the host-arch native addons that cannot load on Bionic
+#      (@parcel/watcher, fff) and TUI audio.
+#   5. TMPDIR under $HOME (Android's /tmp is not writable).
+#
+# Layout (installed package):
+#   bin/opencode                                this wrapper
+#   libexec/opencode/opencode.bin               real binary
+#   libexec/opencode/parser.worker.js           tree-sitter worker
+#   lib/libtagfix.so                            heap tagging fix
+#   lib/libc++_shared.so                        NDK C++ runtime (JIT)
+#   lib/opentui-assets/@opentui/core-linux-*/libopentui.so
+#   lib/librust_pty_arm64.so                    optional Android/Bionic pty lib
+#
+# Flat zip layout: all files sit next to the wrapper.
+
+set -e
+
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+dir="$(cd "$(dirname "$SELF")" && pwd)"
+: "${PREFIX:=/data/data/com.termux/files/usr}"
+export PREFIX
+
+export ANDROID_ROOT="${ANDROID_ROOT:-/system}"
+export TERMUX_VERSION="${TERMUX_VERSION:-opencode-termux}"
+export OPENCODE_DISABLE_TUI_AUDIO="${OPENCODE_DISABLE_TUI_AUDIO:-1}"
+
+# Android's /tmp is not writable by the app; keep temp under $HOME.
+export TMPDIR="${OPENCODE_TMPDIR:-${HOME:-/data/data/com.termux/files/home}/tmp}"
+export TEMP="$TMPDIR"
+export TMP="$TMPDIR"
+mkdir -p "$TMPDIR" 2>/dev/null || true
+
+# Locate native libs / worker / binary across both layouts.
+LIB_DIR=""
+for candidate in "$dir/../lib" "$PREFIX/lib" "$dir"; do
+    if [ -f "$candidate/libtagfix.so" ]; then
+        LIB_DIR="$candidate"
+        break
+    fi
+done
+
+LIBEXEC_DIR=""
+for candidate in "$dir/../libexec/opencode" "$PREFIX/libexec/opencode" "$dir"; do
+    if [ -x "$candidate/opencode.bin" ]; then
+        LIBEXEC_DIR="$candidate"
+        break
+    fi
+done
+
+if [ -n "$LIB_DIR" ]; then
+    export LD_PRELOAD="${LIB_DIR}/libtagfix.so${LD_PRELOAD:+:$LD_PRELOAD}"
+    export LD_LIBRARY_PATH="${LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # opentui renderer library: load from the real filesystem, not /$bunfs.
+    export OTUI_ASSET_ROOT="${LIB_DIR}/opentui-assets"
+    # bun-pty PTY library only when an Android/Bionic build is shipped.
+    if [ -f "${LIB_DIR}/librust_pty_arm64.so" ]; then
+        export BUN_PTY_LIB="${LIB_DIR}/librust_pty_arm64.so"
+    fi
+else
+    echo "opencode: warning: native library directory not found (may crash on Android 11+)" >&2
+fi
+
+# @parcel/watcher and fff bundle the host (x86_64) native binding; disable them
+# on Android to avoid a dlopen architecture mismatch. The tree-sitter worker is
+# shipped as a real file, so point @opentui/core at it.
+export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER="${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-true}"
+export OPENCODE_DISABLE_FFF="${OPENCODE_DISABLE_FFF:-true}"
+if [ -n "$LIBEXEC_DIR" ] && [ -f "$LIBEXEC_DIR/parser.worker.js" ]; then
+    export OTUI_TREE_SITTER_WORKER_PATH="$LIBEXEC_DIR/parser.worker.js"
+fi
+
+if [ -z "$LIBEXEC_DIR" ]; then
+    echo "opencode: error: opencode.bin not found" >&2
+    exit 127
+fi
+
+# Termux's libtermux-exec rewrites the exec to `/system/bin/linker64 <bin>`,
+# making /proc/self/exe point at the linker. BUN_SELF_EXE tells our patched Bun
+# loader which file actually holds the embedded module graph.
+export BUN_SELF_EXE="$LIBEXEC_DIR/opencode.bin"
+exec "$LIBEXEC_DIR/opencode.bin" "$@"

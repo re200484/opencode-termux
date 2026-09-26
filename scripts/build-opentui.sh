@@ -77,9 +77,13 @@ cd "$OPENTUI_ZIG_DIR"
 # (generated libc.txt, see patches/opentui/android-libc-link.patch): passing
 # --sysroot on top of that makes lld resolve -L paths against the sysroot
 # and breaks absolute NDK paths.
+# NOTE: ReleaseFast (not ReleaseSafe) disables Zig runtime safety traps. This is
+# required on Android: Safety checks panic with "integer does not fit in
+# destination type" during interactive prompt handling (viewport/grid churn).
+# Matches guysoft/opencode-termux feature/opencode-latest.
 "$ZIG_BIN" build \
     "$ZIG_TARGET_FLAG=aarch64-linux-android" \
-    -Doptimize=ReleaseSafe \
+    -Doptimize=ReleaseFast \
     --prefix . 2>&1
 
 # The build.zig installs to dest_dir="../lib/{output_name}" relative to
