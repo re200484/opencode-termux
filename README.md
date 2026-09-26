@@ -1,55 +1,77 @@
 # OpenCode for Termux (Android aarch64)
 
+> **Fork note.** This is [`re200484/opencode-termux`](https://github.com/re200484/opencode-termux),
+> a fork of [`guysoft/opencode-termux`](https://github.com/guysoft/opencode-termux).
+> It tracks a newer OpenCode (**1.18.32**) and adds the runtime fixes required to
+> actually start the TUI on current Android — see [Fork additions](#fork-additions).
+> Everything below the fork section is the original upstream documentation and is
+> still accurate for the Bun/WebKit cross-compilation.
+
 Build system for cross-compiling [OpenCode](https://github.com/anomalyco/opencode) to run natively on Android devices via [Termux](https://termux.dev/).
 
-OpenCode is an AI-powered coding assistant for the terminal. It uses [Bun](https://bun.sh/) as its JavaScript runtime and compiles to a standalone binary via `bun build --compile`. Since Bun has no official Android support ([marked "not planned"](https://github.com/oven-sh/bun/issues/9)), this project cross-compiles Bun itself from source for Android/aarch64, including the full WebKit/JavaScriptCore engine.
+## Fork additions
+
+This fork keeps the proven upstream cross-compilation of Bun + WebKit (see below)
+and adds what OpenCode 1.18.x needs to boot on Android. The fixes came from the
+upstream `feature/opencode-latest` branch plus new work for the 1.18.x TUI:
+
+| Fix | Where | Why |
+|-----|-------|-----|
+| Bionic heap-tagging disabler | `src/libtagfix.c` → `libtagfix.so`, `LD_PRELOAD`ed by the launcher | JSC's NaN-boxing clears Bionic's `0xB4` heap tag on `free()`, aborting with `Pointer tag for 0x... was truncated` + SIGABRT. A constructor calls `mallopt(M_BIONIC_SET_HEAP_TAGGING_LEVEL, M_HEAP_TAGGING_LEVEL_NONE)` before JSC initialises. |
+| No-`proot` launcher | `bin/opencode` | Sets `TMPDIR=$HOME/tmp` (+ `TEMP`/`TMP`), `LD_PRELOAD`, `LD_LIBRARY_PATH`, `OTUI_ASSET_ROOT`, the tree-sitter worker path and the disable toggles, then `exec`s `opencode.bin`. `proot` is no longer needed. |
+| C++ runtime shipped | `libc++_shared.so` in the zip | Bun's JIT-compiled modules need it; Android's `/system/lib64` lacks it. For `.deb`/pacman it is a dependency on Termux's `libc++`. |
+| Renderer loaded from disk | launcher sets `OTUI_ASSET_ROOT=<libdir>/opentui-assets` | Bun's virtual `/$bunfs/root/...` paths are not intercepted on Android, so the bundled native library could not be `dlopen`ed from there. The `.so` is shipped under both `@opentui/core-linux-x64/` and `@opentui/core-linux-arm64/` keys. |
+| TUI worker runs in-process | `patches/opencode/android-in-process-worker.patch` | opencode 1.18.x starts the TUI via a `Worker` built from an embedded `$bunfs` module; Bun on Android cannot start Workers from `$bunfs`. Patch replaces it with an in-process RPC channel. |
+| Writable temp dir | `patches/opencode/android-termux-tmp.patch` | `os.tmpdir()` ignores `TMPDIR` on Bionic and returns the unwritable `/tmp`; `global.ts` derives its temp dir from the XDG cache dir instead. |
+| TUI audio disabled | `patches/opencode/android-disable-tui-audio.patch` | Avoids OpenTUI audio-thread panics during interactive use. |
+| Host-arch native modules disabled | launcher sets `OPENCODE_DISABLE_FFF=true`, `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true` | `libfff_c.so` and `@parcel/watcher` ship host-arch binaries only; opencode falls back to ripgrep / polling. |
+| OpenTUI `ReleaseFast` | `scripts/build-opentui.sh` | Drops Zig runtime-safety traps that abort on a benign `integer does not fit in destination type` during prompt handling. |
+| Fast-lane CI | `.github/workflows/build-opentui-only.yml` | Rebuilds only `libopentui.so` (~minutes) without WebKit/Bun. |
+
+This fork's version pins: **OpenCode 1.18.32**, **OpenTUI v0.4.5**, plus the same
+Bun / WebKit / ICU / NDK pins as the upstream table at the bottom.
 
 ## Install (Termux)
 
-### Option 1: Standalone binary (easiest)
+Download the assets from <https://github.com/re200484/opencode-termux/releases/latest>.
 
-> **Note:** The zip contains a launcher script (`opencode`), the real
-> binary (`opencode.bin`), the tree-sitter worker (`parser.worker.js`) and
-> the native TUI library (`opentui-assets/`). The launcher ensures a
-> writable `/tmp` (via `proot` when stock Android doesn't provide one) and
-> points the TUI at its native library. Install all of them below.
+> **Before (re)installing**, remove the previous install — otherwise the launcher
+> may keep executing the old binary:
+> ```bash
+> dpkg --remove --force-remove-reinstreq opencode 2>/dev/null || true
+> rm -rf $PREFIX/libexec/opencode $PREFIX/lib/opentui-assets
+> rm -f  $PREFIX/lib/libtagfix.so $PREFIX/lib/libopentui.so $PREFIX/lib/libc++_shared.so $PREFIX/bin/opencode.bin
+> ```
+
+### Option 1: zip (standalone, recommended)
 
 ```bash
-# Download the latest "opencode-*-android-aarch64.zip" from
-#   https://github.com/re200484/opencode-termux/releases/latest
-# Then install:
-
-pkg install unzip ripgrep proot
-unzip opencode-*-android-aarch64.zip
-mkdir -p $PREFIX/libexec/opencode
-mv opencode $PREFIX/bin/opencode
-chmod +x $PREFIX/bin/opencode
-mv opencode.bin $PREFIX/libexec/opencode/opencode.bin
-chmod +x $PREFIX/libexec/opencode/opencode.bin
-mv parser.worker.js $PREFIX/libexec/opencode/parser.worker.js
-mv opentui-assets $PREFIX/lib/opentui-assets
-
-# Run
+pkg install ripgrep
+cd ~
+unzip -o opencode-*-android-aarch64.zip -d $PREFIX/bin/
+chmod +x $PREFIX/bin/opencode $PREFIX/bin/opencode.bin
 opencode
 ```
 
-### Option 2: Pacman package (recommended if using pacman)
+The zip is flat: the launcher `opencode`, the real binary `opencode.bin`, the
+tree-sitter worker, `libtagfix.so`, `libc++_shared.so` and `opentui-assets/` all
+go into `$PREFIX/bin/`.
+
+### Option 2: pacman / deb
 
 ```bash
-curl -LO https://github.com/guysoft/opencode-termux/releases/latest/download/opencode-aarch64.pkg.tar.xz
-pacman -U opencode-*-aarch64.pkg.tar.xz
+pkg install ripgrep
+# pacman (Termux pacman):
+curl -LO https://github.com/re200484/opencode-termux/releases/latest/download/opencode-1.18.32-1-aarch64.pkg.tar.xz
+pacman -U opencode-1.18.32-1-aarch64.pkg.tar.xz
+# or dpkg:
+curl -LO https://github.com/re200484/opencode-termux/releases/latest/download/opencode_1.18.32_aarch64.deb
+dpkg -i opencode_1.18.32_aarch64.deb
 opencode
 ```
 
-### Option 3: Deb package
-
-```bash
-curl -LO https://github.com/guysoft/opencode-termux/releases/latest/download/opencode-aarch64.deb
-dpkg -i opencode-*-aarch64.deb
-opencode
-```
-
-The pacman and deb packages automatically install `ripgrep` and `proot` as dependencies.
+These install to `$PREFIX/bin`, `$PREFIX/libexec/opencode` and `$PREFIX/lib`, and
+declare `ripgrep` and `libc++` as dependencies.
 
 ### After install
 
@@ -74,25 +96,33 @@ This repo contains **patch files and build scripts** only -- not the full source
 
 ```
 opencode-termux/
+  bin/
+    opencode                       # Termux launcher (fork): env + LD_PRELOAD + exec opencode.bin
+  src/
+    libtagfix.c                    # Bionic heap-tagging disabler (fork)
   patches/
     bun/android-support.patch      # 33 files, Bun Android/aarch64 support
     webkit/android-support.patch   # 5 files, WebKit/JSC Android fixes
     zig/posix-android-sigaction.patch  # Zig stdlib sigaction/sigprocmask fix
-    opentui/android-libc-link.patch  # Link NDK libc.so for Android dlopen
+    opentui/android-libc-link.patch  # Link NDK libc.so + libc.txt for Android
+    opencode/android-in-process-worker.patch  # (fork) run TUI worker in-process
+    opencode/android-termux-tmp.patch         # (fork) derive tmp from XDG cache
+    opencode/android-disable-tui-audio.patch  # (fork) disable TUI audio
   scripts/
     apply-patches.sh               # Clone upstream repos + apply patches
     build-icu.sh                   # Cross-compile ICU 75.1 for Android
     build-webkit.sh                # Cross-compile WebKit/JSC for Android
     build-tinycc.sh                # Cross-compile TinyCC (libtcc.a) for Android
     build-bun.sh                   # Cross-compile Bun for Android
-    build-opentui.sh               # Build libopentui.so for Android
-    build-opencode.sh              # Build OpenCode standalone binary
-    make-packages.sh               # Create zip, pacman, and deb packages
+    build-opentui.sh               # Build libopentui.so for Android (ReleaseFast)
+    build-opencode.sh              # Build OpenCode standalone binary (+ apply patches/opencode)
+    make-packages.sh               # Create zip, pacman, and deb packages (+ libtagfix.so)
     build-opencode-android.ts      # TypeScript helper (module graph extraction)
   cmake/
     webkit-android-toolchain.cmake # WebKit CMake cross-compilation toolchain
   .github/workflows/
-    build.yml                      # GitHub Actions CI workflow
+    build.yml                      # Full CI: Bun + WebKit + OpenCode + release on tag
+    build-opentui-only.yml         # (fork) fast lane: libopentui.so only
 ```
 
 ---
@@ -202,7 +232,7 @@ Bun has zero Android support. Every patch falls into one of these categories:
 
 ### OpenTUI Patch (1 file)
 
-- **Link NDK `libc.so` stub** -- On Android, the `.so` must have `NEEDED: libc.so` in its ELF headers so `dlopen()` can resolve symbols like `getauxval`. Zig doesn't bundle Android libc, so we directly add the NDK sysroot's `libc.so` stub as a link input.
+- **Teach Zig the NDK sysroot + link `libc.so`** -- Zig bundles no Android libc, so a dynamic link for `aarch64-linux-android` fails with `unable to provide libc for target`. The patch generates a `libc.txt` (`include_dir`, `sys_include_dir`, `crt_dir`) and calls `setLibCFile`, and skips `-ldl`/`-lpthread` on the Android ABI (Bionic folds them into libc; the NDK has no `libpthread` stub). The resulting `.so` carries `NEEDED: libc.so` so `dlopen()` resolves symbols like `getauxval` at runtime.
 
 ---
 
@@ -240,15 +270,18 @@ We can't use Bun 1.2.13 as host either, because OpenCode's monorepo uses `catalo
 
 ### Working
 - Full TUI rendering (ASCII art logo, prompt, model selector, status bar)
-- All backend services (server, provider, file watcher, LSP)
+- All backend services (server, provider, LSP)
 - `opencode --version` outputs correct version
-- AI provider connections (tested with Claude, GitHub Copilot)
+- AI provider connections (tested with Claude, GitHub Copilot, DeepSeek)
+- (fork) OpenCode 1.18.32 TUI confirmed working on Termux/aarch64
 
 ### Not working / degraded
 
 | Issue | Severity | Details |
 |-------|----------|---------|
-| File watcher native module | Low | `@parcel/watcher` `.node` binding is compiled for x86_64. Falls back gracefully to polling. Logs: `dlopen failed: "...00000001.node" is for EM_X86_64 (62) instead of EM_AARCH64 (183)` |
+| File watcher native module | Low | `@parcel/watcher` ships a host-arch binding only. The launcher sets `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true`; opencode uses polling instead. |
+| File search (fff) | Low | `@ff-labs/fff-bun` ships host-arch `libfff_c.so`. The launcher sets `OPENCODE_DISABLE_FFF=true`; opencode falls back to ripgrep. |
+| PTY / integrated terminal | Low | `bun-pty`'s `librust_pty` has no Bionic build (the bundled arm64 build is glibc). `BUN_PTY_LIB` is set only if a Bionic `librust_pty_arm64.so` is present. |
 | `bun upgrade` | Low | Disabled on Android -- no Android release channel exists upstream |
 | TinyCC FFI compilation | Low | `libtcc.a` is linked but TCC's runtime code generation may not produce valid ARM64 code. FFI is not commonly used by OpenCode. |
 | SIGPWR signals | None | Many SIGPWR signals appear in strace -- related to Android's power management or Bun's signal handling. Not errors. |
@@ -340,7 +373,8 @@ The Bun team [closed Android support as "not planned"](https://github.com/oven-s
 | Android NDK | r28b (28.1.13356709) | Clang 19, stable |
 | Android API level | 24 (Android 7.0+) | Minimum for 64-bit Termux |
 | Zig (for opentui) | 0.15.2 | Latest stable, Android target support |
-| OpenCode | 1.3.13 | Current release |
+| OpenTUI | v0.4.5 | Matches OpenCode 1.18.x's `@opentui/core` catalog pin |
+| OpenCode | 1.18.32 | Fork target (1.18.30 also built) |
 | TinyCC | `b91835d8` (oven-sh/tinycc) | Matches Bun v1.2.13's expected TinyCC |
 
 ---
