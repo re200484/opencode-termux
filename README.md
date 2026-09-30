@@ -22,6 +22,7 @@ upstream `feature/opencode-latest` branch plus new work for the 1.18.x TUI:
 | C++ runtime shipped | `libc++_shared.so` in the zip | Bun's JIT-compiled modules need it; Android's `/system/lib64` lacks it. For `.deb`/pacman it is a dependency on Termux's `libc++`. |
 | Renderer loaded from disk | launcher sets `OTUI_ASSET_ROOT=<libdir>/opentui-assets` | Bun's virtual `/$bunfs/root/...` paths are not intercepted on Android, so the bundled native library could not be `dlopen`ed from there. The `.so` is shipped under both `@opentui/core-linux-x64/` and `@opentui/core-linux-arm64/` keys. |
 | TUI worker runs in-process | `patches/opencode/android-in-process-worker.patch` | opencode 1.18.x starts the TUI via a `Worker` built from an embedded `$bunfs` module; Bun on Android cannot start Workers from `$bunfs`. Patch replaces it with an in-process RPC channel. |
+| Tree-sitter worker path resolved at runtime | `scripts/build-opencode-android.ts` defines `OTUI_TREE_SITTER_WORKER_PATH` as a runtime expression | `@opentui/core` 0.4.5 threw `OpenTUI asset "@opentui/core/parser.worker.js" has no package-relative fallback` because its embedded import is external in the standalone. The expression points at the shipped `parser.worker.js` (next to the binary, or derived from `BUN_SELF_EXE`). |
 | Writable temp dir | `patches/opencode/android-termux-tmp.patch` | `os.tmpdir()` ignores `TMPDIR` on Bionic and returns the unwritable `/tmp`; `global.ts` derives its temp dir from the XDG cache dir instead. |
 | TUI audio disabled | `patches/opencode/android-disable-tui-audio.patch` | Avoids OpenTUI audio-thread panics during interactive use. |
 | Host-arch native modules disabled | launcher sets `OPENCODE_DISABLE_FFF=true`, `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true` | `libfff_c.so` and `@parcel/watcher` ship host-arch binaries only; opencode falls back to ripgrep / polling. |
@@ -33,15 +34,34 @@ Bun / WebKit / ICU / NDK pins as the upstream table at the bottom.
 
 ## Install (Termux)
 
+### Quick install (recommended)
+
+One script does everything — cleans any previous install, downloads the latest
+release, and installs it (it asks whether you want the `.deb` or the `.zip`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/re200484/opencode-termux/main/scripts/install-termux.sh -o install-opencode.sh
+bash install-opencode.sh
+```
+
+Languages: English (default), Spanish, Italian. Switch with
+`OPENCODE_LANG=es bash install-opencode.sh` (or `it`). It installs only the
+dependencies that are missing and deletes the downloaded file afterwards.
+
+### Manual install
+
 Download the assets from <https://github.com/re200484/opencode-termux/releases/latest>.
 
 > **Before (re)installing**, remove the previous install — otherwise the launcher
 > may keep executing the old binary:
 > ```bash
 > dpkg --remove --force-remove-reinstreq opencode 2>/dev/null || true
-> rm -rf $PREFIX/libexec/opencode $PREFIX/lib/opentui-assets
-> rm -f  $PREFIX/lib/libtagfix.so $PREFIX/lib/libopentui.so $PREFIX/lib/libc++_shared.so $PREFIX/bin/opencode.bin
+> rm -rf $PREFIX/libexec/opencode $PREFIX/lib/opentui-assets $PREFIX/bin/opentui-assets
+> rm -f  $PREFIX/lib/libtagfix.so $PREFIX/lib/libopentui.so
+> rm -f  $PREFIX/bin/opencode.bin $PREFIX/bin/parser.worker.js $PREFIX/bin/libtagfix.so $PREFIX/bin/libc++_shared.so
 > ```
+> Do **not** delete `$PREFIX/lib/libc++_shared.so` — that file belongs to Termux's
+> `libc++` package.
 
 ### Option 1: zip (standalone, recommended)
 
@@ -118,6 +138,7 @@ opencode-termux/
     build-opencode.sh              # Build OpenCode standalone binary (+ apply patches/opencode)
     make-packages.sh               # Create zip, pacman, and deb packages (+ libtagfix.so)
     build-opencode-android.ts      # TypeScript helper (module graph extraction)
+    install-termux.sh              # (fork) on-device installer: cleanup + latest release + deb/zip
   cmake/
     webkit-android-toolchain.cmake # WebKit CMake cross-compilation toolchain
   .github/workflows/
