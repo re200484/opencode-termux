@@ -165,10 +165,17 @@ const result = await Bun.build({
     // as a raw JSON expression, same as upstream script/build.ts).
     // models-snapshot.js above is legacy (pre-1.4 layout) and now unused.
     OPENCODE_MODELS_DEV: modelsData,
-    // NOTE: OTUI_TREE_SITTER_WORKER_PATH is intentionally NOT defined here.
-    // The worker is shipped as a real file and the launcher sets that env var
-    // at runtime (checked first by @opentui/core); a compile-time value would
-    // point at a bundled path that does not exist in this build.
+    // Android: the tree-sitter parser worker is shipped as a real file next to
+    // opencode.bin, and opentui asks for it via the global
+    // OTUI_TREE_SITTER_WORKER_PATH (checked before the bundled $bunfs path,
+    // which Android cannot spawn as a Worker). Define it as a RUNTIME
+    // expression so it resolves on device:
+    //  1) explicit env override, else
+    //  2) parser.worker.js next to opencode.bin (BUN_SELF_EXE), else
+    //  3) the installed-package default.
+    // Without this, resolveDefaultTreeSitterWorkerPath() has an undefined
+    // fallback and throws 'has no package-relative fallback'.
+    OTUI_TREE_SITTER_WORKER_PATH: `(process.env.OTUI_TREE_SITTER_WORKER_PATH || (process.env.BUN_SELF_EXE ? process.env.BUN_SELF_EXE.replace(/[^/]+$/, "parser.worker.js") : "/data/data/com.termux/files/usr/libexec/opencode/parser.worker.js"))`,
     OPENCODE_WORKER_PATH: workerPath,
     OPENCODE_CHANNEL: `'${CHANNEL}'`,
     OPENCODE_LIBC: "",
