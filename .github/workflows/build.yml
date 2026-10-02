@@ -9,7 +9,7 @@ on:
       opencode_version:
         description: 'OpenCode version to build'
         required: false
-        default: '1.18.32'
+        default: '1.18.34'
       auto_prerelease:
         description: 'Publish validation artifacts as a prerelease (requires prerelease_tag)'
         required: false
@@ -28,7 +28,7 @@ permissions:
 
 env:
   BUN_VERSION: "1.2.13"
-  OPENCODE_VERSION: "1.18.32"
+  OPENCODE_VERSION: "1.18.34"
   OPENTUI_VERSION: "v0.4.5"
   ANDROID_API: "24"
   ANDROID_NDK_VERSION: "28.1.13356709"

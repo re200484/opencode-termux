@@ -2,7 +2,7 @@
 
 > **Fork note.** This is [`re200484/opencode-termux`](https://github.com/re200484/opencode-termux),
 > a fork of [`guysoft/opencode-termux`](https://github.com/guysoft/opencode-termux).
-> It tracks a newer OpenCode (**1.18.32**) and adds the runtime fixes required to
+> It tracks a newer OpenCode (**1.18.34**) and adds the runtime fixes required to
 > actually start the TUI on current Android — see [Fork additions](#fork-additions).
 > Everything below the fork section is the original upstream documentation and is
 > still accurate for the Bun/WebKit cross-compilation.
@@ -29,7 +29,7 @@ upstream `feature/opencode-latest` branch plus new work for the 1.18.x TUI:
 | OpenTUI `ReleaseFast` | `scripts/build-opentui.sh` | Drops Zig runtime-safety traps that abort on a benign `integer does not fit in destination type` during prompt handling. |
 | Fast-lane CI | `.github/workflows/build-opentui-only.yml` | Rebuilds only `libopentui.so` (~minutes) without WebKit/Bun. |
 
-This fork's version pins: **OpenCode 1.18.32**, **OpenTUI v0.4.5**, plus the same
+This fork's version pins: **OpenCode 1.18.34**, **OpenTUI v0.4.5**, plus the same
 Bun / WebKit / ICU / NDK pins as the upstream table at the bottom.
 
 ### Automatic upstream checks
@@ -104,11 +104,11 @@ go into `$PREFIX/bin/`.
 ```bash
 pkg install ripgrep
 # pacman (Termux pacman):
-curl -LO https://github.com/re200484/opencode-termux/releases/latest/download/opencode-1.18.32-1-aarch64.pkg.tar.xz
-pacman -U opencode-1.18.32-1-aarch64.pkg.tar.xz
+curl -LO https://github.com/re200484/opencode-termux/releases/latest/download/opencode-1.18.34-1-aarch64.pkg.tar.xz
+pacman -U opencode-1.18.34-1-aarch64.pkg.tar.xz
 # or dpkg:
-curl -LO https://github.com/re200484/opencode-termux/releases/latest/download/opencode_1.18.32_aarch64.deb
-dpkg -i opencode_1.18.32_aarch64.deb
+curl -LO https://github.com/re200484/opencode-termux/releases/latest/download/opencode_1.18.34_aarch64.deb
+dpkg -i opencode_1.18.34_aarch64.deb
 opencode
 ```
 
@@ -316,7 +316,7 @@ We can't use Bun 1.2.13 as host either, because OpenCode's monorepo uses `catalo
 - All backend services (server, provider, LSP)
 - `opencode --version` outputs correct version
 - AI provider connections (tested with Claude, GitHub Copilot, DeepSeek)
-- (fork) OpenCode 1.18.32 TUI confirmed working on Termux/aarch64
+- (fork) OpenCode 1.18.34 TUI confirmed working on Termux/aarch64
 
 ### Not working / degraded
 
@@ -417,7 +417,7 @@ The Bun team [closed Android support as "not planned"](https://github.com/oven-s
 | Android API level | 24 (Android 7.0+) | Minimum for 64-bit Termux |
 | Zig (for opentui) | 0.15.2 | Latest stable, Android target support |
 | OpenTUI | v0.4.5 | Matches OpenCode 1.18.x's `@opentui/core` catalog pin |
-| OpenCode | 1.18.32 | Fork target (1.18.30 also built) |
+| OpenCode | 1.18.34 | Fork target (1.18.30 also built) |
 | TinyCC | `b91835d8` (oven-sh/tinycc) | Matches Bun v1.2.13's expected TinyCC |
 
 ---
