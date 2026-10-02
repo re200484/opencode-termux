@@ -60,6 +60,13 @@ Languages: English (default), Spanish, Italian. Switch with
 `OPENCODE_LANG=es bash install-opencode.sh` (or `it`). It installs only the
 dependencies that are missing and deletes the downloaded file afterwards.
 
+To install a specific release instead of the latest (e.g. a `-rc.1`
+validation pre-release), set its tag:
+
+```bash
+OPENCODE_TAG=v1.18.34-android.1-rc.1 bash install-opencode.sh
+```
+
 ### Manual install
 
 Download the assets from <https://github.com/re200484/opencode-termux/releases/latest>.

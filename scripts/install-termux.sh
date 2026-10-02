@@ -14,7 +14,15 @@
 set -euo pipefail
 
 REPO="re200484/opencode-termux"
-API="https://api.github.com/repos/${REPO}/releases/latest"
+# By default the installer serves "latest" (the last device-tested build;
+# pre-releases never become "latest"). To install a specific release instead
+# (e.g. a -rc.1 validation pre-release), set its tag:
+#   OPENCODE_TAG=v1.18.34-android.1-rc.1 bash install-opencode.sh
+if [ -n "${OPENCODE_TAG:-}" ]; then
+    API="https://api.github.com/repos/${REPO}/releases/tags/${OPENCODE_TAG}"
+else
+    API="https://api.github.com/repos/${REPO}/releases/latest"
+fi
 
 : "${PREFIX:=/data/data/com.termux/files/usr}"
 
