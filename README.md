@@ -60,12 +60,15 @@ Languages: English (default), Spanish, Italian. Switch with
 `OPENCODE_LANG=es bash install-opencode.sh` (or `it`). It installs only the
 dependencies that are missing and deletes the downloaded file afterwards.
 
-To install a specific release instead of the latest (e.g. a `-rc.1`
+To install a specific release instead of choosing interactively (e.g. a `-rc.1`
 validation pre-release), set its tag:
 
 ```bash
 OPENCODE_TAG=v1.18.34-android.1-rc.1 bash install-opencode.sh
 ```
+
+When validation pre-releases exist, the installer lists them next to the
+stable build and asks which one to install (stable is the default).
 
 ### Manual install
 

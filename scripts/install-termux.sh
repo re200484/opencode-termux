@@ -97,6 +97,26 @@ t() {
             es) fmt="eleccion [1/2]: " ;;
             it) fmt="scelta [1/2]: " ;;
         esac ;;
+        which_release) case "$LANG_CODE" in
+            en) fmt="Which release do you want to install?" ;;
+            es) fmt="¿Qué versión quieres instalar?" ;;
+            it) fmt="Quale release vuoi installare?" ;;
+        esac ;;
+        rel_stable) case "$LANG_CODE" in
+            en) fmt="%s (stable, tested)" ;;
+            es) fmt="%s (estable, probada)" ;;
+            it) fmt="%s (stabile, testata)" ;;
+        esac ;;
+        rel_try) case "$LANG_CODE" in
+            en) fmt="%s (to try: validation build, please test it!)" ;;
+            es) fmt="%s (para probar: compilación de validación, ¡pruébala!)" ;;
+            it) fmt="%s (da provare: build di validazione, provala!)" ;;
+        esac ;;
+        rel_choice_prompt) case "$LANG_CODE" in
+            en) fmt="release [1-%s] (default 1): " ;;
+            es) fmt="versión [1-%s] (por defecto 1): " ;;
+            it) fmt="release [1-%s] (predefinita 1): " ;;
+        esac ;;
         invalid_choice) case "$LANG_CODE" in
             en) fmt="Invalid choice: '%s'" ;;
             es) fmt="Eleccion no valida: '%s'" ;;
@@ -185,6 +205,37 @@ ask_choice() {
     fi
 }
 
+# Print newest-first prerelease tags from a /releases list payload.
+list_prerelease_tags() {
+    printf '%s' "$1" | grep -boE '"tag_name": *"[^"]+"|"prerelease": *(true|false)' \
+    | while IFS=: read -r _off rest; do
+        case "$rest" in
+            '"tag_name"'*) curtag="$(printf '%s' "$rest" | sed 's/.*"tag_name": *"//; s/"$//')" ;;
+            '"prerelease": true'*) [ -n "${curtag:-}" ] && printf '%s\n' "$curtag"; curtag="" ;;
+            '"prerelease": false'*) curtag="" ;;
+        esac
+    done
+}
+
+# Parse TAG/ZIP_URL/DEB_URL out of $REL_JSON (single-release payload).
+parse_release_json() {
+    TAG="$(printf '%s' "$REL_JSON" | grep -oE '"tag_name": *"[^"]+"' | head -1 | sed 's/.*"tag_name": *"//; s/"$//')"
+    ZIP_URL="$(printf '%s' "$REL_JSON" | grep -oE '"browser_download_url": *"[^"]+android-aarch64\.zip"' | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')"
+    DEB_URL="$(printf '%s' "$REL_JSON" | grep -oE '"browser_download_url": *"[^"]+_aarch64\.deb"' | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')"
+}
+
+ask_release() {
+    # $1 = stable tag, $2.. = prerelease tags (newest first). Sets REL_CHOICE.
+    local max=$#
+    printf '%s' "$(t rel_choice_prompt "$max")"
+    if [ -r /dev/tty ]; then
+        read -r REL_CHOICE </dev/tty
+    else
+        read -r REL_CHOICE
+    fi
+    : "${REL_CHOICE:=1}"
+}
+
 # ------------------------------------------------------------------- start
 say "== $(t title) =="
 say "$(t lang_note)"
@@ -196,13 +247,46 @@ say "$(t searching "$REPO")"
 REL_JSON="$(curl -fsSL "$API" 2>/dev/null || true)"
 [ -n "$REL_JSON" ] || die "$(t no_github)"
 
-TAG="$(printf '%s' "$REL_JSON" | grep -oE '"tag_name": *"[^"]+"' | head -1 | sed 's/.*"tag_name": *"//; s/"$//')"
-ZIP_URL="$(printf '%s' "$REL_JSON" | grep -oE '"browser_download_url": *"[^"]+android-aarch64\.zip"' | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')"
-DEB_URL="$(printf '%s' "$REL_JSON" | grep -oE '"browser_download_url": *"[^"]+_aarch64\.deb"' | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')"
+parse_release_json
 
 [ -n "$TAG" ]     || die "$(t asset_missing "tag")"
 [ -n "$ZIP_URL" ] || die "$(t asset_missing ".zip")"
 [ -n "$DEB_URL" ] || die "$(t asset_missing ".deb")"
+
+# Offer validation pre-releases (if any) alongside the stable build, unless
+# a tag was forced via OPENCODE_TAG. Pre-releases never become "latest", so
+# without this menu they would only be installable by hand.
+if [ -z "${OPENCODE_TAG:-}" ]; then
+    LIST_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null || true)"
+    # shellcheck disable=SC2207
+    RC_TAGS=($(list_prerelease_tags "$LIST_JSON" | head -3))
+    if [ "${#RC_TAGS[@]}" -gt 0 ]; then
+        say ""
+        say "$(t which_release)"
+        say "  1) $(t rel_stable "$TAG")"
+        i=1
+        for rc in "${RC_TAGS[@]}"; do
+            i=$((i + 1))
+            say "  $i) $(t rel_try "$rc")"
+        done
+        ask_release "$TAG" "${RC_TAGS[@]}"
+        if [ "$REL_CHOICE" != "1" ]; then
+            n=1
+            picked=""
+            for rc in "${RC_TAGS[@]}"; do
+                n=$((n + 1))
+                if [ "$REL_CHOICE" = "$n" ]; then picked="$rc"; break; fi
+            done
+            [ -n "$picked" ] || die "$(t invalid_choice "$REL_CHOICE")"
+            REL_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/tags/${picked}" 2>/dev/null || true)"
+            [ -n "$REL_JSON" ] || die "$(t no_github)"
+            parse_release_json
+            [ -n "$TAG" ]     || die "$(t asset_missing "tag")"
+            [ -n "$ZIP_URL" ] || die "$(t asset_missing ".zip")"
+            [ -n "$DEB_URL" ] || die "$(t asset_missing ".deb")"
+        fi
+    fi
+fi
 say "$(t release_found "$TAG")"
 
 # ------------------------------------------------------------------ cleanup
