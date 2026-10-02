@@ -32,6 +32,17 @@ upstream `feature/opencode-latest` branch plus new work for the 1.18.x TUI:
 This fork's version pins: **OpenCode 1.18.32**, **OpenTUI v0.4.5**, plus the same
 Bun / WebKit / ICU / NDK pins as the upstream table at the bottom.
 
+### Automatic upstream checks
+
+A scheduled workflow (`.github/workflows/check-upstream.yml`, every Monday)
+compares the pinned `OPENCODE_VERSION` with the latest upstream release. When
+a newer one appears it automatically starts a **validation build** (via the
+`opencode_version` input — artifacts only, no release) and opens a tracking
+issue. Cutting a release stays manual: bump the `OPENCODE_VERSION` defaults in
+`.github/workflows/build.yml` and `scripts/env.sh`, tag, and device-test.
+Check locally with `./scripts/check-upstream.sh`, or force a version with
+`UPSTREAM_VERSION_OVERRIDE=1.18.33 ./scripts/check-upstream.sh`.
+
 ## Install (Termux)
 
 ### Quick install (recommended)

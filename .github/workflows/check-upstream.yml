@@ -1,0 +1,71 @@
+name: Check upstream OpenCode releases
+
+# Weekly check for new upstream releases. When one is newer than our pinned
+# OPENCODE_VERSION it automatically starts a VALIDATION build (artifacts
+# only, no release) and opens a tracking issue. Cutting a release stays a
+# human decision: patches/opencode/*.patch are version-sensitive and may need
+# rebasing, and the binary needs a device test.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      force_version:
+        description: "Validate a specific version instead of latest (e.g. 1.18.33)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  check:
+    name: Check for new upstream release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Compare versions
+        id: versions
+        env:
+          UPSTREAM_VERSION_OVERRIDE: ${{ github.event.inputs.force_version }}
+        run: ./scripts/check-upstream.sh
+
+      - name: Start validation build
+        if: steps.versions.outputs.UPDATE_NEEDED == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.versions.outputs.UPSTREAM_VERSION }}
+        run: |
+          echo "New upstream version $NEW_VERSION detected, starting validation build..."
+          gh workflow run "Build OpenCode for Android/Termux" --ref main -f opencode_version="$NEW_VERSION"
+
+      - name: Open tracking issue
+        if: steps.versions.outputs.UPDATE_NEEDED == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.versions.outputs.UPSTREAM_VERSION }}
+          CURRENT_VERSION: ${{ steps.versions.outputs.CURRENT_VERSION }}
+        run: |
+          if [ "$(gh issue list --state open --search "in:title OpenCode $NEW_VERSION validation" --json number --jq length)" -gt 0 ]; then
+            echo "Tracking issue already exists, skipping."
+            exit 0
+          fi
+          gh issue create \
+            --title "OpenCode $NEW_VERSION available — validation build started" \
+            --body "Upstream released **OpenCode $NEW_VERSION** (pinned: $CURRENT_VERSION).
+
+          A validation build was started automatically (artifacts only, no release). Releasing stays manual:
+
+          - [ ] CI validation build green (watch the \`Build OpenCode standalone binary\` step — \`patches/opencode/*.patch\` are version-sensitive and may need rebasing)
+          - [ ] Bump the \`OPENCODE_VERSION\` defaults in \`.github/workflows/build.yml\` and \`scripts/env.sh\`
+          - [ ] Tag \`v<version>-android.1\` and publish the release
+          - [ ] Device test on Termux (\`opencode --version\` + TUI smoke test)
+
+          Upstream release notes: https://github.com/anomalyco/opencode/releases"
