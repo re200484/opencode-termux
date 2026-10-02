@@ -1,10 +1,10 @@
 name: Check upstream OpenCode releases
 
 # Weekly check for new upstream releases. When one is newer than our pinned
-# OPENCODE_VERSION it automatically starts a VALIDATION build (artifacts
-# only, no release) and opens a tracking issue. Cutting a release stays a
-# human decision: patches/opencode/*.patch are version-sensitive and may need
-# rebasing, and the binary needs a device test.
+# OPENCODE_VERSION it automatically starts a VALIDATION build which publishes
+# a -rc.1 PRE-RELEASE (never "latest"), and opens a tracking issue. Promoting
+# to a final release stays a human decision: patches/opencode/*.patch are
+# version-sensitive and may need rebasing, and the binary needs a device test.
 
 on:
   schedule:
@@ -44,7 +44,10 @@ jobs:
           NEW_VERSION: ${{ steps.versions.outputs.UPSTREAM_VERSION }}
         run: |
           echo "New upstream version $NEW_VERSION detected, starting validation build..."
-          gh workflow run "Build OpenCode for Android/Termux" --ref main -f opencode_version="$NEW_VERSION"
+          gh workflow run "Build OpenCode for Android/Termux" --ref main \
+            -f opencode_version="$NEW_VERSION" \
+            -f auto_prerelease=true \
+            -f prerelease_tag="v$NEW_VERSION-android.1-rc.1"
 
       - name: Open tracking issue
         if: steps.versions.outputs.UPDATE_NEEDED == 'yes'
@@ -61,11 +64,12 @@ jobs:
             --title "OpenCode $NEW_VERSION available — validation build started" \
             --body "Upstream released **OpenCode $NEW_VERSION** (pinned: $CURRENT_VERSION).
 
-          A validation build was started automatically (artifacts only, no release). Releasing stays manual:
+          A validation build was started automatically; if green it publishes
+          the **pre-release** \`v$NEW_VERSION-android.1-rc.1\` (never becomes
+          'latest'). Promoting it stays manual:
 
           - [ ] CI validation build green (watch the \`Build OpenCode standalone binary\` step — \`patches/opencode/*.patch\` are version-sensitive and may need rebasing)
-          - [ ] Bump the \`OPENCODE_VERSION\` defaults in \`.github/workflows/build.yml\` and \`scripts/env.sh\`
-          - [ ] Tag \`v<version>-android.1\` and publish the release
-          - [ ] Device test on Termux (\`opencode --version\` + TUI smoke test)
+          - [ ] Device test the \`-rc.1\` pre-release on Termux (\`opencode --version\` + TUI smoke test)
+          - [ ] If green: bump the \`OPENCODE_VERSION\` defaults in \`.github/workflows/build.yml\` and \`scripts/env.sh\`, then tag \`v<version>-android.1\` for the final release
 
           Upstream release notes: https://github.com/anomalyco/opencode/releases"

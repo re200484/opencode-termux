@@ -36,10 +36,11 @@ Bun / WebKit / ICU / NDK pins as the upstream table at the bottom.
 
 A scheduled workflow (`.github/workflows/check-upstream.yml`, every Monday)
 compares the pinned `OPENCODE_VERSION` with the latest upstream release. When
-a newer one appears it automatically starts a **validation build** (via the
-`opencode_version` input — artifacts only, no release) and opens a tracking
-issue. Cutting a release stays manual: bump the `OPENCODE_VERSION` defaults in
-`.github/workflows/build.yml` and `scripts/env.sh`, tag, and device-test.
+a newer one appears it automatically starts a **validation build**, which
+publishes a `-rc.1` **pre-release** (never "latest", so the installer keeps
+serving the last device-tested build), and opens a tracking issue. Promoting
+to a final release stays manual: device-test the `-rc.1` on Termux, then bump
+the `OPENCODE_VERSION` defaults, tag and publish.
 Check locally with `./scripts/check-upstream.sh`, or force a version with
 `UPSTREAM_VERSION_OVERRIDE=1.18.33 ./scripts/check-upstream.sh`.
 
