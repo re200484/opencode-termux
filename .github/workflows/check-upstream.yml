@@ -1,14 +1,18 @@
 name: Check upstream OpenCode releases
 
-# Weekly check for new upstream releases. When one is newer than our pinned
+# Daily check for new upstream releases. When one is newer than our pinned
 # OPENCODE_VERSION it automatically starts a VALIDATION build which publishes
 # a -rc.1 PRE-RELEASE (never "latest"), and opens a tracking issue. Promoting
 # to a final release stays a human decision: patches/opencode/*.patch are
 # version-sensitive and may need rebasing, and the binary needs a device test.
-
+#
+# NOTE: a weekly cron left up to 6 days between an upstream release and the
+# detected update (and GitHub may delay scheduled runs during high load), so
+# this runs daily. The manual "Run workflow" button still works for a check
+# on demand.
 on:
   schedule:
-    - cron: "0 8 * * 1"
+    - cron: "0 8 * * *"
   workflow_dispatch:
     inputs:
       force_version:

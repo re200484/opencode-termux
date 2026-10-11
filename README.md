@@ -34,13 +34,14 @@ Bun / WebKit / ICU / NDK pins as the upstream table at the bottom.
 
 ### Automatic upstream checks
 
-A scheduled workflow (`.github/workflows/check-upstream.yml`, every Monday)
-compares the pinned `OPENCODE_VERSION` with the latest upstream release. When
-a newer one appears it automatically starts a **validation build**, which
-publishes a `-rc.1` **pre-release** (never "latest", so the installer keeps
-serving the last device-tested build), and opens a tracking issue. Promoting
-to a final release stays manual: device-test the `-rc.1` on Termux, then bump
-the `OPENCODE_VERSION` defaults, tag and publish.
+A scheduled workflow (`.github/workflows/check-upstream.yml`, **daily**) compares
+the pinned `OPENCODE_VERSION` with the latest upstream release. When a newer one
+appears it automatically starts a **validation build**, which publishes a `-rc.1`
+**pre-release** (never "latest", so the installer keeps serving the last
+device-tested build), and opens a tracking issue. Promoting to a final release
+stays a one-click manual step: device-test the `-rc.1` on Termux, then run the
+**Promote validated build to final release** action (it bumps the defaults,
+commits, and tags `v<version>-android.1`).
 Check locally with `./scripts/check-upstream.sh`, or force a version with
 `UPSTREAM_VERSION_OVERRIDE=1.18.33 ./scripts/check-upstream.sh`.
 
