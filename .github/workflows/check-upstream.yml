@@ -66,6 +66,7 @@ jobs:
           fi
           gh issue create \
             --title "OpenCode $NEW_VERSION available — validation build started" \
+            --assignee "$GITHUB_REPOSITORY_OWNER" \
             --body "Upstream released **OpenCode $NEW_VERSION** (pinned: $CURRENT_VERSION).
 
           A validation build was started automatically; if green it publishes
