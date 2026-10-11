@@ -1,0 +1,102 @@
+name: Promote validated build to final release
+
+# Manual promotion of a device-tested -rc.1 pre-release to a final release.
+# Run this ONLY after testing the -rc.1 on Termux
+# (opencode --version + TUI smoke test).
+#
+# It verifies the pre-release exists with all 3 assets, bumps the
+# OPENCODE_VERSION defaults, commits, pushes, and tags v<version>-android.1.
+# The tag push triggers the full build, which publishes the final
+# (non-prerelease) GitHub Release that becomes "latest".
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'OpenCode version to promote (e.g. 1.18.35). Its -rc.1 must be device-tested.'
+        required: true
+      rc_tag:
+        description: 'Tested pre-release tag (default: v<version>-android.1-rc.1)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    name: Bump defaults and tag final release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Validate input and tested pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          RC_TAG="${{ github.event.inputs.rc_tag }}"
+          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: version must look like 1.18.35, got '$VERSION'"
+            exit 1
+          fi
+          [ -z "$RC_TAG" ] && RC_TAG="v${VERSION}-android.1-rc.1"
+          echo "RC_TAG=$RC_TAG" >> $GITHUB_ENV
+          echo "FINAL_TAG=v${VERSION}-android.1" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # the rc.1 must exist as a published release with all 3 assets
+          ASSETS="$(gh release view "$RC_TAG" --json assets --jq '.assets | length')"
+          if [ "$ASSETS" -lt 3 ]; then
+            echo "ERROR: pre-release $RC_TAG has only $ASSETS assets (expected 3)"
+            exit 1
+          fi
+          echo "Pre-release $RC_TAG exists with $ASSETS assets."
+          # refuse to overwrite an existing final tag
+          if git ls-remote --tags origin "refs/tags/v${VERSION}-android.1" | grep -q .; then
+            echo "ERROR: final tag v${VERSION}-android.1 already exists; refusing to overwrite."
+            exit 1
+          fi
+
+      - name: Verify patches apply to the new version
+        run: |
+          rm -rf /tmp/opencode-check
+          git clone -q --depth 1 --branch "v$VERSION" https://github.com/sst/opencode.git /tmp/opencode-check
+          for p in patches/opencode/*.patch; do
+            if git -C /tmp/opencode-check apply --check "$GITHUB_WORKSPACE/$p"; then
+              echo "OK $(basename "$p")"
+            else
+              echo "ERROR: $(basename "$p") does not apply to v$VERSION — rebase it before promoting."
+              exit 1
+            fi
+          done
+          rm -rf /tmp/opencode-check
+
+      - name: Bump version defaults, commit, tag
+        run: |
+          CURRENT="$(grep -E '^\s*OPENCODE_VERSION:' .github/workflows/build.yml | head -1 | sed -e 's/.*OPENCODE_VERSION: *//' -e 's/["'\'']//g' -e 's/ *$//')"
+          echo "Pinned version: $CURRENT -> $VERSION"
+          if [ "$CURRENT" != "$VERSION" ]; then
+            sed -i "s/$CURRENT/$VERSION/g" .github/workflows/build.yml scripts/env.sh README.md
+          else
+            echo "Defaults already at $VERSION, skipping bump."
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --short)" ]; then
+            git add .github/workflows/build.yml scripts/env.sh README.md
+            git commit -m "Bump OpenCode to $VERSION (device-tested $RC_TAG promoted to final)"
+            git push origin HEAD:main
+          else
+            echo "Working tree clean, nothing to commit."
+          fi
+          git tag "$FINAL_TAG"
+          git push origin "$FINAL_TAG"
+          {
+            echo "## Promotion complete"
+            echo ""
+            echo "Tagged **$FINAL_TAG** (RC tested: **$RC_TAG**)."
+            echo "The tag push triggers the full build, which publishes the final release."
+          } >> "$GITHUB_STEP_SUMMARY"
