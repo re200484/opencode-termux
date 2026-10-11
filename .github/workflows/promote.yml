@@ -93,15 +93,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           AUTH="$(printf 'x-access-token:%s' "$PROMOTE_TOKEN" | base64 -w0)"
+          # NB: actions/checkout configures its own extraheader (GITHUB_TOKEN).
+          # extraheader is multi-valued: merely ADDING ours via -c sends BOTH
+          # Authorization headers and the server answers 400. Replace it.
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH"
           if [ -n "$(git status --short)" ]; then
             git add .github/workflows/build.yml scripts/env.sh README.md
             git commit -m "Bump OpenCode to $VERSION (device-tested $RC_TAG promoted to final)"
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" push origin HEAD:main
+            git push origin HEAD:main
           else
             echo "Working tree clean, nothing to commit."
           fi
           git tag "$FINAL_TAG"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" push origin "$FINAL_TAG"
+          git push origin "$FINAL_TAG"
           {
             echo "## Promotion complete"
             echo ""
