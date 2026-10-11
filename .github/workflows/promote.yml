@@ -22,9 +22,6 @@ on:
 
 permissions:
   contents: write
-  # required: the bump commit touches .github/workflows/build.yml,
-  # which GitHub rejects without the workflows permission
-  workflows: write
 
 jobs:
   promote:
@@ -78,6 +75,13 @@ jobs:
           rm -rf /tmp/opencode-check
 
       - name: Bump version defaults, commit, tag
+        # NOTE: the push uses the PROMOTE_TOKEN secret (classic PAT with the
+        # workflow scope), NOT GITHUB_TOKEN: GitHub refuses pushes that
+        # create/update files under .github/workflows/ when authenticated
+        # as the GitHub App token, and there is no GITHUB_TOKEN permission
+        # that lifts that restriction.
+        env:
+          PROMOTE_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
         run: |
           CURRENT="$(grep -E '^\s*OPENCODE_VERSION:' .github/workflows/build.yml | head -1 | sed -e 's/.*OPENCODE_VERSION: *//' -e 's/["'\'']//g' -e 's/ *$//')"
           echo "Pinned version: $CURRENT -> $VERSION"
@@ -88,15 +92,16 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          AUTH="$(printf 'x-access-token:%s' "$PROMOTE_TOKEN" | base64 -w0)"
           if [ -n "$(git status --short)" ]; then
             git add .github/workflows/build.yml scripts/env.sh README.md
             git commit -m "Bump OpenCode to $VERSION (device-tested $RC_TAG promoted to final)"
-            git push origin HEAD:main
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" push origin HEAD:main
           else
             echo "Working tree clean, nothing to commit."
           fi
           git tag "$FINAL_TAG"
-          git push origin "$FINAL_TAG"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" push origin "$FINAL_TAG"
           {
             echo "## Promotion complete"
             echo ""
