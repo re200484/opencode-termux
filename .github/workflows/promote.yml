@@ -22,6 +22,9 @@ on:
 
 permissions:
   contents: write
+  # required: the bump commit touches .github/workflows/build.yml,
+  # which GitHub rejects without the workflows permission
+  workflows: write
 
 jobs:
   promote:
