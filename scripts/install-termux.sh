@@ -256,7 +256,11 @@ ask_release() {
 
 # ------------------------------------------------------------------- start
 say "== $(t title) =="
-say "$(t lang_note)"
+# Only mention languages when a non-default one is active: English is the
+# default and needs no configuration.
+if [ "$LANG_CODE" != "en" ]; then
+    say "$(t lang_note)"
+fi
 say ""
 
 ensure_cmd curl curl
