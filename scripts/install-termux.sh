@@ -15,6 +15,9 @@ set -euo pipefail
 
 REPO="re200484/opencode-termux"
 GH="https://github.com/${REPO}"
+# Bumped when the discovery logic changes, so a cached/stale copy is obvious in
+# the debug line printed when release discovery fails.
+INSTALLER_REV="2026-10-16d"
 # Release discovery deliberately avoids api.github.com: anonymous API access is
 # rate-limited to 60 requests/hour per IP, and shared/mobile (CGNAT) connections
 # exhaust that easily, which made the installer fail with "cannot reach GitHub".
@@ -230,11 +233,13 @@ asset_deb_url() {
 }
 # All release tags, newest first, from the public Atom feed (no API, no rate
 # limit). Pre-releases are identifiable by the -rc. suffix our tags use.
+# NOTE: no awk/head in this pipeline — Termux does not ship awk by default, and
+# `head` would close the pipe early (SIGPIPE under `set -o pipefail`). The feed
+# lists each tag exactly once.
 list_release_tags() {
     curl -fsSL "${GH}/releases.atom" 2>/dev/null \
         | grep -oE 'releases/tag/[^"<]+' \
-        | sed 's#releases/tag/##' \
-        | awk '!seen[$0]++'
+        | sed 's#releases/tag/##'
 }
 # Cheap existence check so a wrong asset name fails with a clear message.
 url_exists() {
@@ -277,6 +282,9 @@ if [ -z "$TAG" ]; then
         esac
     done
     if [ -z "$STABLE_TAG" ]; then
+        _http="$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "${GH}/releases.atom" 2>/dev/null || true)"
+        : "${_http:=curl-failed}"
+        printf 'debug: installer rev %s; %s/releases.atom -> HTTP %s\n' "$INSTALLER_REV" "$GH" "$_http" >&2
         die "$(t no_github)"
     fi
     TAG="$STABLE_TAG"
