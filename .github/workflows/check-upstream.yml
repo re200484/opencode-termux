@@ -46,12 +46,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.versions.outputs.UPSTREAM_VERSION }}
+          CURRENT_VERSION: ${{ steps.versions.outputs.CURRENT_VERSION }}
         run: |
+          # Major-version jumps restructure the repository (packages move, the
+          # OpenTUI API changes, the host Bun version changes) and need manual
+          # migration work; an automatic build would just fail. Report only.
+          if [ "${NEW_VERSION%%.*}" != "${CURRENT_VERSION%%.*}" ]; then
+            echo "Major version jump ($CURRENT_VERSION -> $NEW_VERSION): skipping the automatic validation build."
+            exit 0
+          fi
+          # Do not rebuild a validation pre-release that already exists, else the
+          # daily check re-triggers a build every day until the version is promoted.
+          RC_TAG="v$NEW_VERSION-android.1-rc.1"
+          if gh release view "$RC_TAG" >/dev/null 2>&1; then
+            echo "Validation pre-release $RC_TAG already exists; skipping rebuild."
+            exit 0
+          fi
           echo "New upstream version $NEW_VERSION detected, starting validation build..."
           gh workflow run "Build OpenCode for Android/Termux" --ref main \
             -f opencode_version="$NEW_VERSION" \
             -f auto_prerelease=true \
-            -f prerelease_tag="v$NEW_VERSION-android.1-rc.1"
+            -f prerelease_tag="$RC_TAG"
 
       - name: Open tracking issue
         if: steps.versions.outputs.UPDATE_NEEDED == 'yes'
@@ -60,21 +75,53 @@ jobs:
           NEW_VERSION: ${{ steps.versions.outputs.UPSTREAM_VERSION }}
           CURRENT_VERSION: ${{ steps.versions.outputs.CURRENT_VERSION }}
         run: |
-          if [ "$(gh issue list --state open --search "in:title OpenCode $NEW_VERSION validation" --json number --jq length)" -gt 0 ]; then
+          if [ "$(gh issue list --state open --search "in:title OpenCode $NEW_VERSION" --json number --jq length)" -gt 0 ]; then
             echo "Tracking issue already exists, skipping."
             exit 0
           fi
+
+          RC_TAG="v$NEW_VERSION-android.1-rc.1"
+          if [ "${NEW_VERSION%%.*}" != "${CURRENT_VERSION%%.*}" ]; then
+            TITLE="OpenCode $NEW_VERSION available — MAJOR update, manual migration needed"
+          elif gh release view "$RC_TAG" >/dev/null 2>&1; then
+            TITLE="OpenCode $NEW_VERSION available — validation pre-release ready to test"
+          else
+            TITLE="OpenCode $NEW_VERSION available — validation build started"
+          fi
+
+          {
+            echo "Upstream released **OpenCode $NEW_VERSION** (pinned: $CURRENT_VERSION)."
+            echo
+            if [ "${NEW_VERSION%%.*}" != "${CURRENT_VERSION%%.*}" ]; then
+              echo "This is a **major version jump**, so no automatic validation build was"
+              echo "started — it would fail. Major releases restructure the repository"
+              echo "(packages move, the OpenTUI API changes, the pinned host Bun version"
+              echo "changes) and need manual migration:"
+              echo
+              echo "- [ ] Review the upstream changes and rework \`patches/opencode/*.patch\`"
+              echo "- [ ] Check whether \`scripts/build-opentui.sh\` / its patch still apply (OpenTUI layout and API)"
+              echo "- [ ] Verify the host/target Bun module-graph compatibility (the standalone transplant is version-sensitive)"
+              echo "- [ ] Build a validation \`-rc.1\`, device-test it, then promote"
+            elif gh release view "$RC_TAG" >/dev/null 2>&1; then
+              echo "A validation **pre-release** (\`$RC_TAG\`) already exists and was not rebuilt."
+              echo "Promotion stays manual:"
+              echo
+              echo "- [ ] Device test \`$RC_TAG\` on Termux (\`opencode --version\` + TUI smoke test)"
+              echo "- [ ] Promote it with the **Promote validated build to final release** action"
+            else
+              echo "A validation build was started automatically; if green it publishes"
+              echo "the **pre-release** \`$RC_TAG\` (never becomes 'latest'). Promoting it"
+              echo "stays manual:"
+              echo
+              echo "- [ ] CI validation build green (watch the \`Build OpenCode standalone binary\` step — \`patches/opencode/*.patch\` are version-sensitive and may need rebasing)"
+              echo "- [ ] Device test \`$RC_TAG\` on Termux (\`opencode --version\` + TUI smoke test)"
+              echo "- [ ] Promote it with the **Promote validated build to final release** action"
+            fi
+            echo
+            echo "Upstream release notes: https://github.com/anomalyco/opencode/releases"
+          } > /tmp/issue-body.md
+
           gh issue create \
-            --title "OpenCode $NEW_VERSION available — validation build started" \
+            --title "$TITLE" \
             --assignee "$GITHUB_REPOSITORY_OWNER" \
-            --body "Upstream released **OpenCode $NEW_VERSION** (pinned: $CURRENT_VERSION).
-
-          A validation build was started automatically; if green it publishes
-          the **pre-release** \`v$NEW_VERSION-android.1-rc.1\` (never becomes
-          'latest'). Promoting it stays manual:
-
-          - [ ] CI validation build green (watch the \`Build OpenCode standalone binary\` step — \`patches/opencode/*.patch\` are version-sensitive and may need rebasing)
-          - [ ] Device test the \`-rc.1\` pre-release on Termux (\`opencode --version\` + TUI smoke test)
-          - [ ] If green: bump the \`OPENCODE_VERSION\` defaults in \`.github/workflows/build.yml\` and \`scripts/env.sh\`, then tag \`v<version>-android.1\` for the final release
-
-          Upstream release notes: https://github.com/anomalyco/opencode/releases"
+            --body-file /tmp/issue-body.md
