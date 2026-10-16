@@ -14,15 +14,14 @@
 set -euo pipefail
 
 REPO="re200484/opencode-termux"
-# By default the installer serves "latest" (the last device-tested build;
-# pre-releases never become "latest"). To install a specific release instead
-# (e.g. a -rc.1 validation pre-release), set its tag:
-#   OPENCODE_TAG=v1.18.34-android.1-rc.1 bash install-opencode.sh
-if [ -n "${OPENCODE_TAG:-}" ]; then
-    API="https://api.github.com/repos/${REPO}/releases/tags/${OPENCODE_TAG}"
-else
-    API="https://api.github.com/repos/${REPO}/releases/latest"
-fi
+GH="https://github.com/${REPO}"
+# Release discovery deliberately avoids api.github.com: anonymous API access is
+# rate-limited to 60 requests/hour per IP, and shared/mobile (CGNAT) connections
+# exhaust that easily, which made the installer fail with "cannot reach GitHub".
+# We use the public releases.atom feed and the /releases/latest redirect instead.
+#
+# To install a specific release, bypass the menu:
+#   OPENCODE_TAG=v1.19.2-android.1-rc.1 bash install-opencode.sh
 
 : "${PREFIX:=/data/data/com.termux/files/usr}"
 
@@ -58,9 +57,9 @@ t() {
             it) fmt="Ultima release: %s" ;;
         esac ;;
         no_github) case "$LANG_CODE" in
-            en) fmt="Cannot reach GitHub (rate limit?). Try again in a few minutes." ;;
-            es) fmt="No se puede contactar con GitHub (limite de peticiones?). Intenta de nuevo en unos minutos." ;;
-            it) fmt="Impossibile contattare GitHub (rate limit?). Riprova tra qualche minuto." ;;
+            en) fmt="Cannot reach GitHub. Check your network connection and try again." ;;
+            es) fmt="No se puede contactar con GitHub. Comprueba tu conexion e intentalo de nuevo." ;;
+            it) fmt="Impossibile contattare GitHub. Controlla la connessione e riprova." ;;
         esac ;;
         asset_missing) case "$LANG_CODE" in
             en) fmt="Asset %s not found in the latest release." ;;
@@ -215,26 +214,31 @@ ask_choice() {
     read_answer CHOICE
 }
 
-# Print newest-first prerelease tags from a /releases list payload.
-list_prerelease_tags() {
-    printf '%s' "$1" | grep -boE '"tag_name": *"[^"]+"|"prerelease": *(true|false)' \
-    | while IFS=: read -r _off rest; do
-        case "$rest" in
-            '"tag_name"'*) curtag="$(printf '%s' "$rest" | sed 's/.*"tag_name": *"//; s/"$//')" ;;
-            '"prerelease": true'*) [ -n "${curtag:-}" ] && printf '%s\n' "$curtag"; curtag="" ;;
-            '"prerelease": false'*) curtag="" ;;
-        esac
-    done
+# Release tag -> OpenCode version: v1.19.2-android.1-rc.1 -> 1.19.2
+version_of() {
+    printf '%s' "$1" | sed 's/^v//; s/-android\..*$//'
 }
-
-# Parse TAG/ZIP_URL/DEB_URL out of $REL_JSON (single-release payload).
-# NOTE: use `grep -m1` rather than `grep ... | head -1`. Under `set -o pipefail`
-# an early-closing `head` makes the upstream `grep` fail with SIGPIPE, which
-# aborts the whole script silently.
-parse_release_json() {
-    TAG="$(printf '%s' "$REL_JSON" | grep -m1 -oE '"tag_name": *"[^"]+"' | sed 's/.*"tag_name": *"//; s/"$//')"
-    ZIP_URL="$(printf '%s' "$REL_JSON" | grep -m1 -oE '"browser_download_url": *"[^"]+android-aarch64\.zip"' | sed 's/.*"\(https[^"]*\)".*/\1/')"
-    DEB_URL="$(printf '%s' "$REL_JSON" | grep -m1 -oE '"browser_download_url": *"[^"]+_aarch64\.deb"' | sed 's/.*"\(https[^"]*\)".*/\1/')"
+# Compare stable vs pre-release by their version (1.19.2 == 1.19.2).
+base_of() {
+    version_of "$1"
+}
+asset_zip_url() {
+    printf '%s/releases/download/%s/opencode-%s-android-aarch64.zip' "$GH" "$1" "$(version_of "$1")"
+}
+asset_deb_url() {
+    printf '%s/releases/download/%s/opencode_%s_aarch64.deb' "$GH" "$1" "$(version_of "$1")"
+}
+# All release tags, newest first, from the public Atom feed (no API, no rate
+# limit). Pre-releases are identifiable by the -rc. suffix our tags use.
+list_release_tags() {
+    curl -fsSL "${GH}/releases.atom" 2>/dev/null \
+        | grep -oE 'releases/tag/[^"<]+' \
+        | sed 's#releases/tag/##' \
+        | awk '!seen[$0]++'
+}
+# Cheap existence check so a wrong asset name fails with a clear message.
+url_exists() {
+    curl -fsIL --max-time 25 "$1" >/dev/null 2>&1
 }
 
 ask_release() {
@@ -253,60 +257,54 @@ say ""
 ensure_cmd curl curl
 
 say "$(t searching "$REPO")"
-REL_JSON="$(curl -fsSL "$API" 2>/dev/null || true)"
-[ -n "$REL_JSON" ] || die "$(t no_github)"
 
-parse_release_json
+STABLE_TAG=""
+RC_TAG=""
+TAG="${OPENCODE_TAG:-}"
+if [ -z "$TAG" ]; then
+    TAGS=()
+    while IFS= read -r _line; do
+        if [ -n "$_line" ]; then TAGS+=("$_line"); fi
+    done < <(list_release_tags)
+    for _t in "${TAGS[@]}"; do
+        case "$_t" in
+            *-rc.*)
+                if [ -z "$RC_TAG" ]; then RC_TAG="$_t"; fi
+                ;;
+            *)
+                if [ -z "$STABLE_TAG" ]; then STABLE_TAG="$_t"; fi
+                ;;
+        esac
+    done
+    if [ -z "$STABLE_TAG" ]; then
+        die "$(t no_github)"
+    fi
+    TAG="$STABLE_TAG"
+fi
+
+# Offer the newest validation pre-release next to the stable build, unless a
+# tag was forced via OPENCODE_TAG or both point at the same version.
+if [ -z "${OPENCODE_TAG:-}" ] && [ -n "$RC_TAG" ] && [ "$(base_of "$RC_TAG")" != "$(base_of "$TAG")" ]; then
+    say ""
+    say "$(t which_release)"
+    say "  1) $(t rel_stable "$TAG")"
+    say "  2) $(t rel_try "$RC_TAG")"
+    ask_release 2
+    case "${REL_CHOICE:-1}" in
+        1) : ;;
+        2) TAG="$RC_TAG" ;;
+        *) die "$(t invalid_choice "$REL_CHOICE")" ;;
+    esac
+fi
+
+ZIP_URL="$(asset_zip_url "$TAG")"
+DEB_URL="$(asset_deb_url "$TAG")"
 
 [ -n "$TAG" ]     || die "$(t asset_missing "tag")"
 [ -n "$ZIP_URL" ] || die "$(t asset_missing ".zip")"
 [ -n "$DEB_URL" ] || die "$(t asset_missing ".deb")"
-
-# Offer validation pre-releases (if any) alongside the stable build, unless
-# a tag was forced via OPENCODE_TAG. Pre-releases never become "latest", so
-# without this menu they would only be installable by hand.
-if [ -z "${OPENCODE_TAG:-}" ]; then
-    LIST_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null || true)"
-    # shellcheck disable=SC2207
-    # Only the newest pre-release, and only when it is a different version than
-    # the stable build (otherwise the menu would offer the same version twice).
-    # NOTE: take the first line without a pipe — `| head -1` would close the
-    # pipe early and, with `set -o pipefail`, kill the script on SIGPIPE.
-    RC_LIST="$(list_prerelease_tags "$LIST_JSON" || true)"
-    RC_TAGS=()
-    if [ -n "$RC_LIST" ]; then
-        RC_TAGS=("${RC_LIST%%$'\n'*}")
-    fi
-    base_of() { printf '%s' "$1" | sed 's/-android\..*$//'; }
-    if [ "${#RC_TAGS[@]}" -gt 0 ] && [ "$(base_of "${RC_TAGS[0]}")" = "$(base_of "$TAG")" ]; then
-        RC_TAGS=()
-    fi
-    if [ "${#RC_TAGS[@]}" -gt 0 ]; then
-        say ""
-        say "$(t which_release)"
-        say "  1) $(t rel_stable "$TAG")"
-        i=1
-        for rc in "${RC_TAGS[@]}"; do
-            i=$((i + 1))
-            say "  $i) $(t rel_try "$rc")"
-        done
-        ask_release "$i"
-        if [ "$REL_CHOICE" != "1" ]; then
-            n=1
-            picked=""
-            for rc in "${RC_TAGS[@]}"; do
-                n=$((n + 1))
-                if [ "$REL_CHOICE" = "$n" ]; then picked="$rc"; break; fi
-            done
-            [ -n "$picked" ] || die "$(t invalid_choice "$REL_CHOICE")"
-            REL_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/tags/${picked}" 2>/dev/null || true)"
-            [ -n "$REL_JSON" ] || die "$(t no_github)"
-            parse_release_json
-            [ -n "$TAG" ]     || die "$(t asset_missing "tag")"
-            [ -n "$ZIP_URL" ] || die "$(t asset_missing ".zip")"
-            [ -n "$DEB_URL" ] || die "$(t asset_missing ".deb")"
-        fi
-    fi
+if ! url_exists "$ZIP_URL"; then
+    die "$(t asset_missing "$(printf '%s' "$ZIP_URL" | sed 's#.*/##')")"
 fi
 say "$(t release_found "$TAG")"
 
@@ -346,6 +344,7 @@ case "$CHOICE" in
         t downloading "$ZIP_URL"
         curl -fL --progress-bar "$ZIP_URL" -o "$TMP_DIR/opencode.zip"
         t installing_flat
+        mkdir -p "$PREFIX/bin"
         unzip -o "$TMP_DIR/opencode.zip" -d "$PREFIX/bin/"
         chmod +x "$PREFIX/bin/opencode" "$PREFIX/bin/opencode.bin"
         ;;
