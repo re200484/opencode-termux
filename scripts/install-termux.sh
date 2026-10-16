@@ -259,7 +259,13 @@ parse_release_json
 if [ -z "${OPENCODE_TAG:-}" ]; then
     LIST_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null || true)"
     # shellcheck disable=SC2207
-    RC_TAGS=($(list_prerelease_tags "$LIST_JSON" | head -3))
+    # Only the newest pre-release, and only when it is a different version than
+    # the stable build (otherwise the menu would offer the same version twice).
+    RC_TAGS=($(list_prerelease_tags "$LIST_JSON" | head -1))
+    base_of() { printf '%s' "$1" | sed 's/-android\..*$//'; }
+    if [ "${#RC_TAGS[@]}" -gt 0 ] && [ "$(base_of "${RC_TAGS[0]}")" = "$(base_of "$TAG")" ]; then
+        RC_TAGS=()
+    fi
     if [ "${#RC_TAGS[@]}" -gt 0 ]; then
         say ""
         say "$(t which_release)"
