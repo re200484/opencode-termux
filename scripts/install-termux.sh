@@ -196,13 +196,23 @@ ensure_libcpp() {
     pkg install -y libc++
 }
 
+# Read a line into $1 from the terminal. Falls back to stdin, and never lets a
+# failed read abort the script under `set -e` (e.g. no controlling terminal).
+read_answer() {
+    local __var="$1" __val=""
+    if { IFS= read -r __val </dev/tty; } 2>/dev/null; then
+        :
+    elif IFS= read -r __val 2>/dev/null; then
+        :
+    else
+        __val=""
+    fi
+    printf -v "$__var" '%s' "$__val"
+}
+
 ask_choice() {
     printf '%s' "$(t choice_prompt)"
-    if [ -r /dev/tty ]; then
-        read -r CHOICE </dev/tty
-    else
-        read -r CHOICE
-    fi
+    read_answer CHOICE
 }
 
 # Print newest-first prerelease tags from a /releases list payload.
@@ -218,21 +228,20 @@ list_prerelease_tags() {
 }
 
 # Parse TAG/ZIP_URL/DEB_URL out of $REL_JSON (single-release payload).
+# NOTE: use `grep -m1` rather than `grep ... | head -1`. Under `set -o pipefail`
+# an early-closing `head` makes the upstream `grep` fail with SIGPIPE, which
+# aborts the whole script silently.
 parse_release_json() {
-    TAG="$(printf '%s' "$REL_JSON" | grep -oE '"tag_name": *"[^"]+"' | head -1 | sed 's/.*"tag_name": *"//; s/"$//')"
-    ZIP_URL="$(printf '%s' "$REL_JSON" | grep -oE '"browser_download_url": *"[^"]+android-aarch64\.zip"' | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')"
-    DEB_URL="$(printf '%s' "$REL_JSON" | grep -oE '"browser_download_url": *"[^"]+_aarch64\.deb"' | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')"
+    TAG="$(printf '%s' "$REL_JSON" | grep -m1 -oE '"tag_name": *"[^"]+"' | sed 's/.*"tag_name": *"//; s/"$//')"
+    ZIP_URL="$(printf '%s' "$REL_JSON" | grep -m1 -oE '"browser_download_url": *"[^"]+android-aarch64\.zip"' | sed 's/.*"\(https[^"]*\)".*/\1/')"
+    DEB_URL="$(printf '%s' "$REL_JSON" | grep -m1 -oE '"browser_download_url": *"[^"]+_aarch64\.deb"' | sed 's/.*"\(https[^"]*\)".*/\1/')"
 }
 
 ask_release() {
-    # $1 = stable tag, $2.. = prerelease tags (newest first). Sets REL_CHOICE.
-    local max=$#
+    # $1 = number of menu entries. Sets REL_CHOICE (default 1).
+    local max=$1
     printf '%s' "$(t rel_choice_prompt "$max")"
-    if [ -r /dev/tty ]; then
-        read -r REL_CHOICE </dev/tty
-    else
-        read -r REL_CHOICE
-    fi
+    read_answer REL_CHOICE
     : "${REL_CHOICE:=1}"
 }
 
@@ -261,7 +270,13 @@ if [ -z "${OPENCODE_TAG:-}" ]; then
     # shellcheck disable=SC2207
     # Only the newest pre-release, and only when it is a different version than
     # the stable build (otherwise the menu would offer the same version twice).
-    RC_TAGS=($(list_prerelease_tags "$LIST_JSON" | head -1))
+    # NOTE: take the first line without a pipe — `| head -1` would close the
+    # pipe early and, with `set -o pipefail`, kill the script on SIGPIPE.
+    RC_LIST="$(list_prerelease_tags "$LIST_JSON" || true)"
+    RC_TAGS=()
+    if [ -n "$RC_LIST" ]; then
+        RC_TAGS=("${RC_LIST%%$'\n'*}")
+    fi
     base_of() { printf '%s' "$1" | sed 's/-android\..*$//'; }
     if [ "${#RC_TAGS[@]}" -gt 0 ] && [ "$(base_of "${RC_TAGS[0]}")" = "$(base_of "$TAG")" ]; then
         RC_TAGS=()
@@ -275,7 +290,7 @@ if [ -z "${OPENCODE_TAG:-}" ]; then
             i=$((i + 1))
             say "  $i) $(t rel_try "$rc")"
         done
-        ask_release "$TAG" "${RC_TAGS[@]}"
+        ask_release "$i"
         if [ "$REL_CHOICE" != "1" ]; then
             n=1
             picked=""
